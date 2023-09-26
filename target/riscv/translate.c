@@ -1115,7 +1115,8 @@ static inline int insn_len(uint16_t first_word)
 {
     return (first_word & 3) == 3 ? 4 : 2;
 }
-
+#include "include/sysemu/runstate.h"
+extern ShutdownAction shutdown_action;
 static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
 {
     /*
@@ -1150,9 +1151,15 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
                              translator_lduw(env, &ctx->base,
                                              ctx->base.pc_next + 2));
         ctx->opcode = opcode32;
-
+        if(opcode32 == 0x6b){
+            if(!ctx->cs->env_ptr->gpr[10]){
+                shutdown_action = SHUTDOWN_ACTION_POWEROFF;
+                qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+            }
+            return ;
+        }
+        
         for (size_t i = 0; i < ARRAY_SIZE(decoders); ++i) {
-            printf("gen_exception_illegal\n");
             if (decoders[i].guard_func(ctx->cfg_ptr) &&
                 decoders[i].decode_func(ctx, opcode32)) {
                 return;
