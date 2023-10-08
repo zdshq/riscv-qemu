@@ -2,3 +2,4 @@
 *.h.inc         diff=c
 *.m             diff=objc
 *.py            diff=python
+snapshot.qcow2 filter=lfs diff=lfs merge=lfs -text
