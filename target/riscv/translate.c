@@ -1098,6 +1098,7 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "insn_trans/trans_svinval.c.inc"
 #include "insn_trans/trans_rvbf16.c.inc"
 #include "decode-xthead.c.inc"
+#include "checkpoint/serializer.h"
 #include "insn_trans/trans_xthead.c.inc"
 #include "insn_trans/trans_xventanacondops.c.inc"
 
@@ -1115,8 +1116,11 @@ static inline int insn_len(uint16_t first_word)
 {
     return (first_word & 3) == 3 ? 4 : 2;
 }
-#include "include/sysemu/runstate.h"
-extern ShutdownAction shutdown_action;
+
+
+
+#include "qapi/qapi-commands-machine.h"
+long long int instcount = 0;
 static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
 {
     /*
@@ -1146,18 +1150,22 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
             return;
         }
     } else {
+        // serializeRegs();
         uint32_t opcode32 = opcode;
         opcode32 = deposit32(opcode32, 16, 16,
                              translator_lduw(env, &ctx->base,
                                              ctx->base.pc_next + 2));
         ctx->opcode = opcode32;
-        if(opcode32 == 0x6b){
-            if(!ctx->cs->env_ptr->gpr[10]){
-                shutdown_action = SHUTDOWN_ACTION_POWEROFF;
-                qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
-            }
-            return ;
+        
+        instcount++;
+        if(instcount > 50000){
+            // MemoryInfo * info = qmp_query_memory_size_summary(NULL);
+            // qmp_gzpmemsave(0x80000000, info->base_memory, "ab1.txt", NULL);
+
+            instcount = 0;
+            serializeRegs();
         }
+
         
         for (size_t i = 0; i < ARRAY_SIZE(decoders); ++i) {
             if (decoders[i].guard_func(ctx->cfg_ptr) &&
