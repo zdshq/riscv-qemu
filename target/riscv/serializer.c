@@ -15,17 +15,26 @@
 #include "instmap.h"
 #include <zlib.h>
 #include "internals.h"
-// CPUState *qemu_get_cpu(int index)
+#include "hw/intc/riscv_aclint.h"
+extern RISCVAclintMTimerState *my_riscv_mtimer;
 void serializeRegs(void){
-    // cpu_physical_memory_write
     CPUState *cs = qemu_get_cpu(0);
     for(int i = 0 ; i < 32; i++){
         cpu_physical_memory_write(INT_REG_CPT_ADDR + i*8, &cs->env_ptr->gpr[i], 8);
     }
+    // F extertion
     for(int i = 0 ; i < 32; i++){
         cpu_physical_memory_write(FLOAT_REG_CPT_ADDR + i*8, &cs->env_ptr->fpr[i], 8);
     }
+
     cpu_physical_memory_write(PC_CPT_ADDR, &cs->env_ptr->pc, 8);
+    // V extertion
+    if(cs->env_ptr->vill){
+        for(int i = 0; i < 32 * RV_VLEN_MAX / 64; i++){
+            cpu_physical_memory_write(VECTOR_REGS_CPT_ADDR + i*8, &cs->env_ptr->vreg[i], 8);
+        }        
+    }
+    // CSR registers
     for(int i = 0; i < CSR_TABLE_SIZE; i++){
         if(csr_ops[i].read != NULL){
             target_ulong val;
@@ -36,6 +45,11 @@ void serializeRegs(void){
     uint64_t val;
     val = CPT_MAGIC_BUMBER;
     cpu_physical_memory_write(BOOT_FLAGS, &val, 8);
+    uint64_t mtimecmp = riscv_aclint_mtimer_read(my_riscv_mtimer, my_riscv_mtimer->timecmp_base, 8);
+    cpu_physical_memory_write(BOOT_FLAGS+16, &mtimecmp, 8);
+    uint64_t mtime = riscv_aclint_mtimer_read(my_riscv_mtimer, my_riscv_mtimer->time_base, 8);
+    cpu_physical_memory_write(BOOT_FLAGS+24, &mtime, 8);
+    
 }
 
 void qmp_gzpmemsave(int64_t addr, int64_t size, const char *filename,
