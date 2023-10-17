@@ -959,25 +959,25 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 }
 
 /* main execution loop */
-
+#include "qapi/qapi-commands-machine.h"
+#include "checkpoint/serializer.h"
+long long int instcount = 0;
+bool checkpoint = false;
 static int __attribute__((noinline))
 cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 {
     int ret;
-
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
         TranslationBlock *last_tb = NULL;
         int tb_exit = 0;
-
         while (!cpu_handle_interrupt(cpu, &last_tb)) {
             TranslationBlock *tb;
             vaddr pc;
             uint64_t cs_base;
             uint32_t flags, cflags;
-
             cpu_get_tb_cpu_state(cpu->env_ptr, &pc, &cs_base, &flags);
-
+            
             /*
              * When requested, use an exact setting for cflags for the next
              * execution.  This is used for icount, precise smc, and stop-
@@ -1042,6 +1042,17 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(sc, cpu);
+
+            instcount++;
+            if(instcount > 120000 ){
+                if(!checkpoint){
+                    MemoryInfo * info = qmp_query_memory_size_summary(NULL);
+                    serializeRegs();
+                    qmp_gzpmemsave(0x80000000, info->base_memory, "bbl.gz", NULL);    
+                    checkpoint = true;
+                }
+                instcount = 0;
+            }
         }
     }
     return ret;

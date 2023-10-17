@@ -1118,9 +1118,7 @@ static inline int insn_len(uint16_t first_word)
 }
 
 
-
-#include "qapi/qapi-commands-machine.h"
-long long int instcount = 0;
+long long int a = 0;
 static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
 {
     /*
@@ -1138,6 +1136,7 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
 
     ctx->virt_inst_excp = false;
     ctx->cur_insn_len = insn_len(opcode);
+    a++;
     /* Check for compressed insn */
     if (ctx->cur_insn_len == 2) {
         ctx->opcode = opcode;
@@ -1157,15 +1156,6 @@ static void decode_opc(CPURISCVState *env, DisasContext *ctx, uint16_t opcode)
                                              ctx->base.pc_next + 2));
         ctx->opcode = opcode32;
         
-        instcount++;
-        if(instcount > 50000){
-            // MemoryInfo * info = qmp_query_memory_size_summary(NULL);
-            // qmp_gzpmemsave(0x80000000, info->base_memory, "ab1.txt", NULL);
-
-            instcount = 0;
-            serializeRegs();
-        }
-
         
         for (size_t i = 0; i < ARRAY_SIZE(decoders); ++i) {
             if (decoders[i].guard_func(ctx->cfg_ptr) &&
