@@ -14,7 +14,7 @@
 
 struct TCGCPUOps {
     /**
-     * @initialize: Initialize TCG state
+     * @initialize: Initalize TCG state
      *
      * Called when the first CPU is realized.
      */

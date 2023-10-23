@@ -208,6 +208,7 @@ struct ArchCPU {
     CPUState parent_obj;
     /*< public >*/
 
+    CPUNegativeOffsetState neg;
     CPUSH4State env;
 };
 

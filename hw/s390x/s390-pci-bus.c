@@ -27,7 +27,16 @@
 #include "sysemu/reset.h"
 #include "sysemu/runstate.h"
 
-#include "trace.h"
+#ifndef DEBUG_S390PCI_BUS
+#define DEBUG_S390PCI_BUS  0
+#endif
+
+#define DPRINTF(fmt, ...)                                         \
+    do {                                                          \
+        if (DEBUG_S390PCI_BUS) {                                  \
+            fprintf(stderr, "S390pci-bus: " fmt, ## __VA_ARGS__); \
+        }                                                         \
+    } while (0)
 
 S390pciState *s390_get_phb(void)
 {
@@ -123,7 +132,7 @@ void s390_pci_sclp_configure(SCCB *sccb)
     uint16_t rc;
 
     if (!pbdev) {
-        trace_s390_pci_sclp_nodev("configure", be32_to_cpu(psccb->aid));
+        DPRINTF("sclp config no dev found\n");
         rc = SCLP_RC_ADAPTER_ID_NOT_RECOGNIZED;
         goto out;
     }
@@ -190,7 +199,7 @@ void s390_pci_sclp_deconfigure(SCCB *sccb)
     uint16_t rc;
 
     if (!pbdev) {
-        trace_s390_pci_sclp_nodev("deconfigure", be32_to_cpu(psccb->aid));
+        DPRINTF("sclp deconfig no dev found\n");
         rc = SCLP_RC_ADAPTER_ID_NOT_RECOGNIZED;
         goto out;
     }
@@ -564,7 +573,7 @@ static IOMMUTLBEntry s390_translate_iommu(IOMMUMemoryRegion *mr, hwaddr addr,
         return ret;
     }
 
-    trace_s390_pci_iommu_xlate(addr);
+    DPRINTF("iommu trans addr 0x%" PRIx64 "\n", addr);
 
     if (addr < iommu->pba || addr > iommu->pal) {
         error = ERR_EVENT_OORANGE;
@@ -683,8 +692,8 @@ static void s390_msi_ctrl_write(void *opaque, hwaddr addr, uint64_t data,
     uint32_t sum_bit;
 
     assert(pbdev);
-
-    trace_s390_pci_msi_ctrl_write(data, pbdev->idx, vec);
+    DPRINTF("write_msix data 0x%" PRIx64 " idx %d vec 0x%x\n", data,
+            pbdev->idx, vec);
 
     if (pbdev->state != ZPCI_FS_ENABLED) {
         return;
@@ -834,7 +843,7 @@ static void s390_pcihost_realize(DeviceState *dev, Error **errp)
     PCIHostState *phb = PCI_HOST_BRIDGE(dev);
     S390pciState *s = S390_PCI_HOST_BRIDGE(dev);
 
-    trace_s390_pcihost("realize");
+    DPRINTF("host_init\n");
 
     b = pci_register_root_bus(dev, NULL, s390_pci_set_irq, s390_pci_map_irq,
                               NULL, get_system_memory(), get_system_io(), 0,
@@ -1111,7 +1120,7 @@ static void s390_pcihost_plug(HotplugHandler *hotplug_dev, DeviceState *dev,
                         return;
                     }
                 } else {
-                    trace_s390_pcihost("zPCI interpretation missing");
+                    DPRINTF("zPCI interpretation facilities missing.\n");
                     pbdev->interp = false;
                     pbdev->forwarding_assist = false;
                 }

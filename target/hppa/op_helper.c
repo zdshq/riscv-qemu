@@ -179,8 +179,7 @@ target_ureg HELPER(probe)(CPUHPPAState *env, target_ulong addr,
         return 0;
     }
 
-    excp = hppa_get_physical_address(env, addr, level, 0, &phys,
-                                     &prot, NULL);
+    excp = hppa_get_physical_address(env, addr, level, 0, &phys, &prot);
     if (excp >= 0) {
         if (env->psw & PSW_Q) {
             /* ??? Needs tweaking for hppa64.  */

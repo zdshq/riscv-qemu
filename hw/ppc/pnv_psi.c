@@ -738,9 +738,8 @@ static void pnv_psi_p9_mmio_write(void *opaque, hwaddr addr,
             }
         } else {
             if (!(psi->regs[reg] & PSIHB9_ESB_CI_VALID)) {
-                hwaddr esb_addr =
-                    val & ~(PSIHB9_ESB_CI_VALID | PSIHB10_ESB_CI_64K);
-                memory_region_add_subregion(sysmem, esb_addr,
+                hwaddr addr = val & ~(PSIHB9_ESB_CI_VALID | PSIHB10_ESB_CI_64K);
+                memory_region_add_subregion(sysmem, addr,
                                             &psi9->source.esb_mmio);
             }
         }

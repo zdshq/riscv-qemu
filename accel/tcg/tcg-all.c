@@ -27,7 +27,7 @@
 #include "sysemu/tcg.h"
 #include "exec/replay-core.h"
 #include "sysemu/cpu-timers.h"
-#include "tcg/startup.h"
+#include "tcg/tcg.h"
 #include "tcg/oversized-guest.h"
 #include "qapi/error.h"
 #include "qemu/error-report.h"
@@ -38,7 +38,7 @@
 #if !defined(CONFIG_USER_ONLY)
 #include "hw/boards.h"
 #endif
-#include "internal-target.h"
+#include "internal.h"
 
 struct TCGState {
     AccelState parent_obj;
@@ -121,7 +121,7 @@ static int tcg_init_machine(MachineState *ms)
      * There's no guest base to take into account, so go ahead and
      * initialize the prologue now.
      */
-    tcg_prologue_init();
+    tcg_prologue_init(tcg_ctx);
 #endif
 
     return 0;
@@ -227,8 +227,6 @@ static void tcg_accel_class_init(ObjectClass *oc, void *data)
     AccelClass *ac = ACCEL_CLASS(oc);
     ac->name = "tcg";
     ac->init_machine = tcg_init_machine;
-    ac->cpu_common_realize = tcg_exec_realizefn;
-    ac->cpu_common_unrealize = tcg_exec_unrealizefn;
     ac->allowed = &tcg_allowed;
     ac->gdbstub_supported_sstep_flags = tcg_gdbstub_supported_sstep_flags;
 

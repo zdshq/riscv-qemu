@@ -301,14 +301,12 @@ static int qcow_open(BlockDriverState *bs, QDict *options, int flags,
     }
 
     /* Disable migration when qcow images are used */
-    bdrv_graph_rdlock_main_loop();
     error_setg(&s->migration_blocker, "The qcow format used by node '%s' "
                "does not support live migration",
                bdrv_get_device_or_node_name(bs));
-    bdrv_graph_rdunlock_main_loop();
-
-    ret = migrate_add_blocker(&s->migration_blocker, errp);
+    ret = migrate_add_blocker(s->migration_blocker, errp);
     if (ret < 0) {
+        error_free(s->migration_blocker);
         goto fail;
     }
 
@@ -551,10 +549,7 @@ qcow_co_block_status(BlockDriverState *bs, bool want_zero,
     if (!cluster_offset) {
         return 0;
     }
-    if (cluster_offset & QCOW_OFLAG_COMPRESSED) {
-        return BDRV_BLOCK_DATA | BDRV_BLOCK_COMPRESSED;
-    }
-    if (s->crypto) {
+    if ((cluster_offset & QCOW_OFLAG_COMPRESSED) || s->crypto) {
         return BDRV_BLOCK_DATA;
     }
     *map = cluster_offset | index_in_cluster;
@@ -801,7 +796,8 @@ static void qcow_close(BlockDriverState *bs)
     g_free(s->cluster_cache);
     g_free(s->cluster_data);
 
-    migrate_del_blocker(&s->migration_blocker);
+    migrate_del_blocker(s->migration_blocker);
+    error_free(s->migration_blocker);
 }
 
 static int coroutine_fn GRAPH_UNLOCKED

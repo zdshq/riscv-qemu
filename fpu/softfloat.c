@@ -517,7 +517,6 @@ typedef struct {
  *   round_mask: bits below lsb which must be rounded
  * The following optional modifiers are available:
  *   arm_althp: handle ARM Alternative Half Precision
- *   m68k_denormal: explicit integer bit for extended precision may be 1
  */
 typedef struct {
     int exp_size;
@@ -527,7 +526,6 @@ typedef struct {
     int frac_size;
     int frac_shift;
     bool arm_althp;
-    bool m68k_denormal;
     uint64_t round_mask;
 } FloatFmt;
 
@@ -578,12 +576,7 @@ static const FloatFmt float128_params = {
 static const FloatFmt floatx80_params[3] = {
     [floatx80_precision_s] = { FLOATX80_PARAMS(23) },
     [floatx80_precision_d] = { FLOATX80_PARAMS(52) },
-    [floatx80_precision_x] = {
-        FLOATX80_PARAMS(64),
-#ifdef TARGET_M68K
-        .m68k_denormal = true,
-#endif
-    },
+    [floatx80_precision_x] = { FLOATX80_PARAMS(64) },
 };
 
 /* Unpack a float to parts, but do not canonicalize.  */
@@ -3133,15 +3126,6 @@ int64_t float64_to_int64_scalbn(float64 a, FloatRoundMode rmode, int scale,
     return parts_float_to_sint(&p, rmode, scale, INT64_MIN, INT64_MAX, s);
 }
 
-int8_t bfloat16_to_int8_scalbn(bfloat16 a, FloatRoundMode rmode, int scale,
-                               float_status *s)
-{
-    FloatParts64 p;
-
-    bfloat16_unpack_canonical(&p, a, s);
-    return parts_float_to_sint(&p, rmode, scale, INT8_MIN, INT8_MAX, s);
-}
-
 int16_t bfloat16_to_int16_scalbn(bfloat16 a, FloatRoundMode rmode, int scale,
                                  float_status *s)
 {
@@ -3408,11 +3392,6 @@ int64_t floatx80_to_int64_round_to_zero(floatx80 a, float_status *s)
     return floatx80_to_int64_scalbn(a, float_round_to_zero, 0, s);
 }
 
-int8_t bfloat16_to_int8(bfloat16 a, float_status *s)
-{
-    return bfloat16_to_int8_scalbn(a, s->float_rounding_mode, 0, s);
-}
-
 int16_t bfloat16_to_int16(bfloat16 a, float_status *s)
 {
     return bfloat16_to_int16_scalbn(a, s->float_rounding_mode, 0, s);
@@ -3426,11 +3405,6 @@ int32_t bfloat16_to_int32(bfloat16 a, float_status *s)
 int64_t bfloat16_to_int64(bfloat16 a, float_status *s)
 {
     return bfloat16_to_int64_scalbn(a, s->float_rounding_mode, 0, s);
-}
-
-int8_t bfloat16_to_int8_round_to_zero(bfloat16 a, float_status *s)
-{
-    return bfloat16_to_int8_scalbn(a, float_round_to_zero, 0, s);
 }
 
 int16_t bfloat16_to_int16_round_to_zero(bfloat16 a, float_status *s)
@@ -3558,15 +3532,6 @@ uint64_t float64_to_uint64_scalbn(float64 a, FloatRoundMode rmode, int scale,
 
     float64_unpack_canonical(&p, a, s);
     return parts_float_to_uint(&p, rmode, scale, UINT64_MAX, s);
-}
-
-uint8_t bfloat16_to_uint8_scalbn(bfloat16 a, FloatRoundMode rmode,
-                                 int scale, float_status *s)
-{
-    FloatParts64 p;
-
-    bfloat16_unpack_canonical(&p, a, s);
-    return parts_float_to_uint(&p, rmode, scale, UINT8_MAX, s);
 }
 
 uint16_t bfloat16_to_uint16_scalbn(bfloat16 a, FloatRoundMode rmode,
@@ -3794,11 +3759,6 @@ Int128 float128_to_uint128_round_to_zero(float128 a, float_status *s)
     return float128_to_uint128_scalbn(a, float_round_to_zero, 0, s);
 }
 
-uint8_t bfloat16_to_uint8(bfloat16 a, float_status *s)
-{
-    return bfloat16_to_uint8_scalbn(a, s->float_rounding_mode, 0, s);
-}
-
 uint16_t bfloat16_to_uint16(bfloat16 a, float_status *s)
 {
     return bfloat16_to_uint16_scalbn(a, s->float_rounding_mode, 0, s);
@@ -3812,11 +3772,6 @@ uint32_t bfloat16_to_uint32(bfloat16 a, float_status *s)
 uint64_t bfloat16_to_uint64(bfloat16 a, float_status *s)
 {
     return bfloat16_to_uint64_scalbn(a, s->float_rounding_mode, 0, s);
-}
-
-uint8_t bfloat16_to_uint8_round_to_zero(bfloat16 a, float_status *s)
-{
-    return bfloat16_to_uint8_scalbn(a, float_round_to_zero, 0, s);
 }
 
 uint16_t bfloat16_to_uint16_round_to_zero(bfloat16 a, float_status *s)
@@ -3974,11 +3929,6 @@ bfloat16 int16_to_bfloat16_scalbn(int16_t a, int scale, float_status *status)
     return int64_to_bfloat16_scalbn(a, scale, status);
 }
 
-bfloat16 int8_to_bfloat16_scalbn(int8_t a, int scale, float_status *status)
-{
-    return int64_to_bfloat16_scalbn(a, scale, status);
-}
-
 bfloat16 int64_to_bfloat16(int64_t a, float_status *status)
 {
     return int64_to_bfloat16_scalbn(a, 0, status);
@@ -3990,11 +3940,6 @@ bfloat16 int32_to_bfloat16(int32_t a, float_status *status)
 }
 
 bfloat16 int16_to_bfloat16(int16_t a, float_status *status)
-{
-    return int64_to_bfloat16_scalbn(a, 0, status);
-}
-
-bfloat16 int8_to_bfloat16(int8_t a, float_status *status)
 {
     return int64_to_bfloat16_scalbn(a, 0, status);
 }
@@ -4194,11 +4139,6 @@ bfloat16 uint16_to_bfloat16_scalbn(uint16_t a, int scale, float_status *status)
     return uint64_to_bfloat16_scalbn(a, scale, status);
 }
 
-bfloat16 uint8_to_bfloat16_scalbn(uint8_t a, int scale, float_status *status)
-{
-    return uint64_to_bfloat16_scalbn(a, scale, status);
-}
-
 bfloat16 uint64_to_bfloat16(uint64_t a, float_status *status)
 {
     return uint64_to_bfloat16_scalbn(a, 0, status);
@@ -4210,11 +4150,6 @@ bfloat16 uint32_to_bfloat16(uint32_t a, float_status *status)
 }
 
 bfloat16 uint16_to_bfloat16(uint16_t a, float_status *status)
-{
-    return uint64_to_bfloat16_scalbn(a, 0, status);
-}
-
-bfloat16 uint8_to_bfloat16(uint8_t a, float_status *status)
 {
     return uint64_to_bfloat16_scalbn(a, 0, status);
 }

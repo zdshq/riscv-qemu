@@ -1213,10 +1213,10 @@ struct ArchCPU {
     CPUState parent_obj;
     /*< public >*/
 
-    CPUMIPSState env;
-
     Clock *clock;
     Clock *count_div; /* Divider for CP0_Count clock */
+    CPUNegativeOffsetState neg;
+    CPUMIPSState env;
 };
 
 
@@ -1224,8 +1224,8 @@ void mips_cpu_list(void);
 
 #define cpu_list mips_cpu_list
 
-void cpu_wrdsp(uint32_t rs, uint32_t mask_num, CPUMIPSState *env);
-uint32_t cpu_rddsp(uint32_t mask_num, CPUMIPSState *env);
+extern void cpu_wrdsp(uint32_t rs, uint32_t mask_num, CPUMIPSState *env);
+extern uint32_t cpu_rddsp(uint32_t mask_num, CPUMIPSState *env);
 
 /*
  * MMU modes definitions. We carefully match the indices with our
@@ -1345,10 +1345,11 @@ uint64_t cpu_mips_phys_to_kseg1(void *opaque, uint64_t addr);
 
 #if !defined(CONFIG_USER_ONLY)
 
-/* HW declaration specific to the MIPS target */
+/* mips_int.c */
 void cpu_mips_soft_irq(CPUMIPSState *env, int irq, int level);
-void cpu_mips_irq_init_cpu(MIPSCPU *cpu);
-void cpu_mips_clock_init(MIPSCPU *cpu);
+
+/* mips_itu.c */
+void itc_reconfigure(struct MIPSITUState *tag);
 
 #endif /* !CONFIG_USER_ONLY */
 

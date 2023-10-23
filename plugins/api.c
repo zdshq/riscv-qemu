@@ -316,7 +316,22 @@ uint64_t qemu_plugin_hwaddr_phys_addr(const struct qemu_plugin_hwaddr *haddr)
 {
 #ifdef CONFIG_SOFTMMU
     if (haddr) {
-        return haddr->phys_addr;
+        if (!haddr->is_io) {
+            RAMBlock *block;
+            ram_addr_t offset;
+            void *hostaddr = haddr->v.ram.hostaddr;
+
+            block = qemu_ram_block_from_host(hostaddr, false, &offset);
+            if (!block) {
+                error_report("Bad host ram pointer %p", haddr->v.ram.hostaddr);
+                abort();
+            }
+
+            return block->offset + offset + block->mr->addr;
+        } else {
+            MemoryRegionSection *mrs = haddr->v.io.section;
+            return mrs->offset_within_address_space + haddr->v.io.offset;
+        }
     }
 #endif
     return 0;
@@ -326,13 +341,13 @@ const char *qemu_plugin_hwaddr_device_name(const struct qemu_plugin_hwaddr *h)
 {
 #ifdef CONFIG_SOFTMMU
     if (h && h->is_io) {
-        MemoryRegion *mr = h->mr;
-        if (!mr->name) {
-            unsigned maddr = (uintptr_t)mr;
-            g_autofree char *temp = g_strdup_printf("anon%08x", maddr);
+        MemoryRegionSection *mrs = h->v.io.section;
+        if (!mrs->mr->name) {
+            unsigned long maddr = 0xffffffff & (uintptr_t) mrs->mr;
+            g_autofree char *temp = g_strdup_printf("anon%08lx", maddr);
             return g_intern_string(temp);
         } else {
-            return g_intern_string(mr->name);
+            return g_intern_string(mrs->mr->name);
         }
     } else {
         return g_intern_static_string("RAM");

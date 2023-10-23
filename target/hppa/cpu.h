@@ -30,21 +30,10 @@
    basis.  It's probably easier to fall back to a strong memory model.  */
 #define TCG_GUEST_DEFAULT_MO        TCG_MO_ALL
 
-#define MMU_KERNEL_IDX   11
-#define MMU_PL1_IDX      12
-#define MMU_PL2_IDX      13
-#define MMU_USER_IDX     14
-#define MMU_PHYS_IDX     15
-
-#define PRIV_TO_MMU_IDX(priv)    (MMU_KERNEL_IDX + (priv))
-#define MMU_IDX_TO_PRIV(mmu_idx) ((mmu_idx) - MMU_KERNEL_IDX)
-
+#define MMU_KERNEL_IDX   0
+#define MMU_USER_IDX     3
+#define MMU_PHYS_IDX     4
 #define TARGET_INSN_START_EXTRA_WORDS 1
-
-/* No need to flush MMU_PHYS_IDX  */
-#define HPPA_MMU_FLUSH_MASK                             \
-        (1 << MMU_KERNEL_IDX | 1 << MMU_PL1_IDX |       \
-         1 << MMU_PL2_IDX    | 1 << MMU_USER_IDX)
 
 /* Hardware exceptions, interrupts, faults, and traps.  */
 #define EXCP_HPMC                1  /* high priority machine check */
@@ -211,14 +200,8 @@ typedef struct CPUArchState {
     target_ureg shadow[7];   /* shadow registers */
 
     /* ??? The number of entries isn't specified by the architecture.  */
-#ifdef TARGET_HPPA64
-#define HPPA_BTLB_FIXED         0       /* BTLBs are not supported in 64-bit machines */
-#else
-#define HPPA_BTLB_FIXED         16
-#endif
-#define HPPA_BTLB_VARIABLE      0
 #define HPPA_TLB_ENTRIES        256
-#define HPPA_BTLB_ENTRIES       (HPPA_BTLB_FIXED + HPPA_BTLB_VARIABLE)
+#define HPPA_BTLB_ENTRIES       0
 
     /* ??? Implement a unified itlb/dtlb for the moment.  */
     /* ??? We should use a more intelligent data structure.  */
@@ -237,6 +220,7 @@ struct ArchCPU {
     CPUState parent_obj;
     /*< public >*/
 
+    CPUNegativeOffsetState neg;
     CPUHPPAState env;
     QEMUTimer *alarm_timer;
 };
@@ -249,7 +233,7 @@ static inline int cpu_mmu_index(CPUHPPAState *env, bool ifetch)
     return MMU_USER_IDX;
 #else
     if (env->psw & (ifetch ? PSW_C : PSW_D)) {
-        return PRIV_TO_MMU_IDX(env->iaoq_f & 3);
+        return env->iaoq_f & 3;
     }
     return MMU_PHYS_IDX;  /* mmu disabled */
 #endif
@@ -349,8 +333,7 @@ bool hppa_cpu_tlb_fill(CPUState *cs, vaddr address, int size,
 void hppa_cpu_do_interrupt(CPUState *cpu);
 bool hppa_cpu_exec_interrupt(CPUState *cpu, int int_req);
 int hppa_get_physical_address(CPUHPPAState *env, vaddr addr, int mmu_idx,
-                              int type, hwaddr *pphys, int *pprot,
-                              hppa_tlb_entry **tlb_entry);
+                              int type, hwaddr *pphys, int *pprot);
 extern const MemoryRegionOps hppa_io_eir_ops;
 extern const VMStateDescription vmstate_hppa_cpu;
 void hppa_cpu_alarm_timer(void *);

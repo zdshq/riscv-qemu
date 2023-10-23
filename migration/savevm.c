@@ -979,8 +979,6 @@ static void save_section_footer(QEMUFile *f, SaveStateEntry *se)
 static int vmstate_save(QEMUFile *f, SaveStateEntry *se, JSONWriter *vmdesc)
 {
     int ret;
-    Error *local_err = NULL;
-    MigrationState *s = migrate_get_current();
 
     if ((!se->ops || !se->ops->save_state) && !se->vmsd) {
         return 0;
@@ -1002,10 +1000,8 @@ static int vmstate_save(QEMUFile *f, SaveStateEntry *se, JSONWriter *vmdesc)
     if (!se->vmsd) {
         vmstate_save_old_style(f, se, vmdesc);
     } else {
-        ret = vmstate_save_state_with_err(f, se->vmsd, se->opaque, vmdesc, &local_err);
+        ret = vmstate_save_state(f, se->vmsd, se->opaque, vmdesc);
         if (ret) {
-            migrate_set_error(s, local_err);
-            error_report_err(local_err);
             return ret;
         }
     }
@@ -1072,14 +1068,10 @@ void qemu_savevm_send_open_return_path(QEMUFile *f)
 int qemu_savevm_send_packaged(QEMUFile *f, const uint8_t *buf, size_t len)
 {
     uint32_t tmp;
-    MigrationState *ms = migrate_get_current();
-    Error *local_err = NULL;
 
     if (len > MAX_VM_CMD_PACKAGED_SIZE) {
-        error_setg(&local_err, "%s: Unreasonably large packaged state: %zu",
+        error_report("%s: Unreasonably large packaged state: %zu",
                      __func__, len);
-        migrate_set_error(ms, local_err);
-        error_report_err(local_err);
         return -1;
     }
 
@@ -1217,27 +1209,13 @@ void qemu_savevm_non_migratable_list(strList **reasons)
 
 void qemu_savevm_state_header(QEMUFile *f)
 {
-    MigrationState *s = migrate_get_current();
-
-    s->vmdesc = json_writer_new(false);
-
     trace_savevm_state_header();
     qemu_put_be32(f, QEMU_VM_FILE_MAGIC);
     qemu_put_be32(f, QEMU_VM_FILE_VERSION);
 
-    if (s->send_configuration) {
+    if (migrate_get_current()->send_configuration) {
         qemu_put_byte(f, QEMU_VM_CONFIGURATION);
-
-        /*
-         * This starts the main json object and is paired with the
-         * json_writer_end_object in
-         * qemu_savevm_state_complete_precopy_non_iterable
-         */
-        json_writer_start_object(s->vmdesc, NULL);
-
-        json_writer_start_object(s->vmdesc, "configuration");
-        vmstate_save_state(f, &vmstate_configuration, &savevm_state, s->vmdesc);
-        json_writer_end_object(s->vmdesc);
+        vmstate_save_state(f, &vmstate_configuration, &savevm_state, 0);
     }
 }
 
@@ -1255,30 +1233,6 @@ bool qemu_savevm_state_guest_unplug_pending(void)
     return false;
 }
 
-int qemu_savevm_state_prepare(Error **errp)
-{
-    SaveStateEntry *se;
-    int ret;
-
-    QTAILQ_FOREACH(se, &savevm_state.handlers, entry) {
-        if (!se->ops || !se->ops->save_prepare) {
-            continue;
-        }
-        if (se->ops->is_active) {
-            if (!se->ops->is_active(se->opaque)) {
-                continue;
-            }
-        }
-
-        ret = se->ops->save_prepare(se->opaque, errp);
-        if (ret < 0) {
-            return ret;
-        }
-    }
-
-    return 0;
-}
-
 void qemu_savevm_state_setup(QEMUFile *f)
 {
     MigrationState *ms = migrate_get_current();
@@ -1286,6 +1240,8 @@ void qemu_savevm_state_setup(QEMUFile *f)
     Error *local_err = NULL;
     int ret;
 
+    ms->vmdesc = json_writer_new(false);
+    json_writer_start_object(ms->vmdesc, NULL);
     json_writer_int64(ms->vmdesc, "page_size", qemu_target_page_size());
     json_writer_start_array(ms->vmdesc, "devices");
 
@@ -1392,7 +1348,6 @@ int qemu_savevm_state_iterate(QEMUFile *f, bool postcopy)
         ret = se->ops->save_live_iterate(f, se->opaque);
         trace_savevm_section_end(se->idstr, se->section_id, ret);
         save_section_footer(f, se);
-
         if (ret < 0) {
             error_report("failed to save SaveStateEntry with id(name): "
                          "%d(%s): %d",
@@ -1519,11 +1474,8 @@ int qemu_savevm_state_complete_precopy_non_iterable(QEMUFile *f,
          * bdrv_activate_all() on the other end won't fail. */
         ret = bdrv_inactivate_all();
         if (ret) {
-            Error *local_err = NULL;
-            error_setg(&local_err, "%s: bdrv_inactivate_all() failed (%d)",
-                       __func__, ret);
-            migrate_set_error(ms, local_err);
-            error_report_err(local_err);
+            error_report("%s: bdrv_inactivate_all() failed (%d)",
+                         __func__, ret);
             qemu_file_set_error(f, ret);
             return ret;
         }
@@ -1666,14 +1618,16 @@ static int qemu_savevm_state(QEMUFile *f, Error **errp)
         return -EINVAL;
     }
 
-    ret = migrate_init(ms, errp);
-    if (ret) {
-        return ret;
-    }
+    migrate_init(ms);
+    memset(&mig_stats, 0, sizeof(mig_stats));
+    memset(&compression_counters, 0, sizeof(compression_counters));
+    reset_vfio_bytes_transferred();
     ms->to_dst_file = f;
 
+    qemu_mutex_unlock_iothread();
     qemu_savevm_state_header(f);
     qemu_savevm_state_setup(f);
+    qemu_mutex_lock_iothread();
 
     while (qemu_file_get_error(f) == 0) {
         if (qemu_savevm_state_iterate(f, false) > 0) {
@@ -2744,8 +2698,7 @@ static bool postcopy_pause_incoming(MigrationIncomingState *mis)
         qemu_mutex_unlock(&mis->postcopy_prio_thread_mutex);
     }
 
-    /* Current state can be either ACTIVE or RECOVER */
-    migrate_set_state(&mis->state, mis->state,
+    migrate_set_state(&mis->state, MIGRATION_STATUS_POSTCOPY_ACTIVE,
                       MIGRATION_STATUS_POSTCOPY_PAUSED);
 
     /* Notify the fault thread for the invalidated file handle */

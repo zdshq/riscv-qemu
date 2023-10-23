@@ -24,7 +24,6 @@
 #include "sysemu/device_tree.h"
 #include "qom/object.h"
 #include "net/can_emu.h"
-#include "audio/audio.h"
 
 struct XlnxZCU102 {
     MachineState parent_obj;
@@ -144,10 +143,6 @@ static void xlnx_zcu102_init(MachineState *machine)
 
     object_initialize_child(OBJECT(machine), "soc", &s->soc, TYPE_XLNX_ZYNQMP);
 
-    if (machine->audiodev) {
-        qdev_prop_set_string(DEVICE(&s->soc.dp), "audiodev", machine->audiodev);
-    }
-
     object_property_set_link(OBJECT(&s->soc), "ddr-ram", OBJECT(machine->ram),
                              &error_abort);
     object_property_set_bool(OBJECT(&s->soc), "secure", s->secure,
@@ -206,7 +201,6 @@ static void xlnx_zcu102_init(MachineState *machine)
             qdev_prop_set_drive_err(flash_dev, "drive",
                                     blk_by_legacy_dinfo(dinfo), &error_fatal);
         }
-        qdev_prop_set_uint8(flash_dev, "cs", i);
         qdev_realize_and_unref(flash_dev, spi_bus, &error_fatal);
 
         cs_line = qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0);
@@ -230,7 +224,6 @@ static void xlnx_zcu102_init(MachineState *machine)
             qdev_prop_set_drive_err(flash_dev, "drive",
                                     blk_by_legacy_dinfo(dinfo), &error_fatal);
         }
-        qdev_prop_set_uint8(flash_dev, "cs", i);
         qdev_realize_and_unref(flash_dev, spi_bus, &error_fatal);
 
         cs_line = qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0);
@@ -280,7 +273,6 @@ static void xlnx_zcu102_machine_class_init(ObjectClass *oc, void *data)
     mc->default_cpus = XLNX_ZYNQMP_NUM_APU_CPUS;
     mc->default_ram_id = "ddr-ram";
 
-    machine_add_audiodev_property(mc);
     object_class_property_add_bool(oc, "secure", zcu102_get_secure,
                                    zcu102_set_secure);
     object_class_property_set_description(oc, "secure",

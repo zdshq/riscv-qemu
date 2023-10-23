@@ -540,7 +540,7 @@ static bool risbg_mask(uint64_t c)
 }
 
 /* Test if a constant matches the constraint. */
-static bool tcg_target_const_match(int64_t val, TCGType type, int ct, int vece)
+static bool tcg_target_const_match(int64_t val, TCGType type, int ct)
 {
     if (ct & TCG_CT_CONST) {
         return 1;
@@ -1266,8 +1266,7 @@ static int tgen_cmp(TCGContext *s, TCGType type, TCGCond c, TCGReg r1,
 }
 
 static void tgen_setcond(TCGContext *s, TCGType type, TCGCond cond,
-                         TCGReg dest, TCGReg c1, TCGArg c2,
-                         bool c2const, bool neg)
+                         TCGReg dest, TCGReg c1, TCGArg c2, int c2const)
 {
     int cc;
 
@@ -1276,27 +1275,11 @@ static void tgen_setcond(TCGContext *s, TCGType type, TCGCond cond,
         /* Emit: d = 0, d = (cc ? 1 : d).  */
         cc = tgen_cmp(s, type, cond, c1, c2, c2const, false);
         tcg_out_movi(s, TCG_TYPE_I64, dest, 0);
-        tcg_out_insn(s, RIEg, LOCGHI, dest, neg ? -1 : 1, cc);
+        tcg_out_insn(s, RIEg, LOCGHI, dest, 1, cc);
         return;
     }
 
-    switch (cond) {
-    case TCG_COND_GEU:
-    case TCG_COND_LTU:
-    case TCG_COND_LT:
-    case TCG_COND_GE:
-        /* Swap operands so that we can use LEU/GTU/GT/LE.  */
-        if (!c2const) {
-            TCGReg t = c1;
-            c1 = c2;
-            c2 = t;
-            cond = tcg_swap_cond(cond);
-        }
-        break;
-    default:
-        break;
-    }
-
+ restart:
     switch (cond) {
     case TCG_COND_NE:
         /* X != 0 is X > 0.  */
@@ -1309,20 +1292,11 @@ static void tgen_setcond(TCGContext *s, TCGType type, TCGCond cond,
 
     case TCG_COND_GTU:
     case TCG_COND_GT:
-        /*
-         * The result of a compare has CC=2 for GT and CC=3 unused.
-         * ADD LOGICAL WITH CARRY considers (CC & 2) the carry bit.
-         */
+        /* The result of a compare has CC=2 for GT and CC=3 unused.
+           ADD LOGICAL WITH CARRY considers (CC & 2) the carry bit.  */
         tgen_cmp(s, type, cond, c1, c2, c2const, true);
         tcg_out_movi(s, type, dest, 0);
         tcg_out_insn(s, RRE, ALCGR, dest, dest);
-        if (neg) {
-            if (type == TCG_TYPE_I32) {
-                tcg_out_insn(s, RR, LCR, dest, dest);
-            } else {
-                tcg_out_insn(s, RRE, LCGR, dest, dest);
-            }
-        }
         return;
 
     case TCG_COND_EQ:
@@ -1336,17 +1310,27 @@ static void tgen_setcond(TCGContext *s, TCGType type, TCGCond cond,
 
     case TCG_COND_LEU:
     case TCG_COND_LE:
-        /*
-         * As above, but we're looking for borrow, or !carry.
-         * The second insn computes d - d - borrow, or -1 for true
-         * and 0 for false.  So we must mask to 1 bit afterward.
-         */
+        /* As above, but we're looking for borrow, or !carry.
+           The second insn computes d - d - borrow, or -1 for true
+           and 0 for false.  So we must mask to 1 bit afterward.  */
         tgen_cmp(s, type, cond, c1, c2, c2const, true);
         tcg_out_insn(s, RRE, SLBGR, dest, dest);
-        if (!neg) {
-            tgen_andi(s, type, dest, 1);
-        }
+        tgen_andi(s, type, dest, 1);
         return;
+
+    case TCG_COND_GEU:
+    case TCG_COND_LTU:
+    case TCG_COND_LT:
+    case TCG_COND_GE:
+        /* Swap operands so that we can use LEU/GTU/GT/LE.  */
+        if (!c2const) {
+            TCGReg t = c1;
+            c1 = c2;
+            c2 = t;
+            cond = tcg_swap_cond(cond);
+            goto restart;
+        }
+        break;
 
     default:
         g_assert_not_reached();
@@ -1355,7 +1339,7 @@ static void tgen_setcond(TCGContext *s, TCGType type, TCGCond cond,
     cc = tgen_cmp(s, type, cond, c1, c2, c2const, false);
     /* Emit: d = 0, t = 1, d = (cc ? t : d).  */
     tcg_out_movi(s, TCG_TYPE_I64, dest, 0);
-    tcg_out_movi(s, TCG_TYPE_I64, TCG_TMP0, neg ? -1 : 1);
+    tcg_out_movi(s, TCG_TYPE_I64, TCG_TMP0, 1);
     tcg_out_insn(s, RRFc, LOCGR, dest, TCG_TMP0, cc);
 }
 
@@ -1750,8 +1734,8 @@ static bool tcg_out_qemu_st_slow_path(TCGContext *s, TCGLabelQemuLdst *lb)
 #define MIN_TLB_MASK_TABLE_OFS  -(1 << 19)
 
 /*
- * For system-mode, perform the TLB load and compare.
- * For user-mode, perform any required alignment tests.
+ * For softmmu, perform the TLB load and compare.
+ * For useronly, perform any required alignment tests.
  * In both cases, return a TCGLabelQemuLdst structure if the slow path
  * is required and fill in @h with the host address for the fast path.
  */
@@ -2304,11 +2288,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         break;
     case INDEX_op_setcond_i32:
         tgen_setcond(s, TCG_TYPE_I32, args[3], args[0], args[1],
-                     args[2], const_args[2], false);
-        break;
-    case INDEX_op_negsetcond_i32:
-        tgen_setcond(s, TCG_TYPE_I32, args[3], args[0], args[1],
-                     args[2], const_args[2], true);
+                     args[2], const_args[2]);
         break;
     case INDEX_op_movcond_i32:
         tgen_movcond(s, TCG_TYPE_I32, args[5], args[0], args[1],
@@ -2586,11 +2566,7 @@ static inline void tcg_out_op(TCGContext *s, TCGOpcode opc,
         break;
     case INDEX_op_setcond_i64:
         tgen_setcond(s, TCG_TYPE_I64, args[3], args[0], args[1],
-                     args[2], const_args[2], false);
-        break;
-    case INDEX_op_negsetcond_i64:
-        tgen_setcond(s, TCG_TYPE_I64, args[3], args[0], args[1],
-                     args[2], const_args[2], true);
+                     args[2], const_args[2]);
         break;
     case INDEX_op_movcond_i64:
         tgen_movcond(s, TCG_TYPE_I64, args[5], args[0], args[1],
@@ -3133,10 +3109,8 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode op)
     case INDEX_op_rotr_i32:
     case INDEX_op_rotr_i64:
     case INDEX_op_setcond_i32:
-    case INDEX_op_negsetcond_i32:
         return C_O1_I2(r, r, ri);
     case INDEX_op_setcond_i64:
-    case INDEX_op_negsetcond_i64:
         return C_O1_I2(r, r, rA);
 
     case INDEX_op_clz_i64:
@@ -3481,11 +3455,6 @@ static void tcg_target_qemu_prologue(TCGContext *s)
 
     /* br %r14 (return) */
     tcg_out_insn(s, RR, BCR, S390_CC_ALWAYS, TCG_REG_R14);
-}
-
-static void tcg_out_tb_start(TCGContext *s)
-{
-    /* nothing to do */
 }
 
 static void tcg_out_nop_fill(tcg_insn_unit *p, int count)

@@ -59,7 +59,6 @@ RUN apk update && \
         libtasn1-dev \
         liburing-dev \
         libusb-dev \
-        libxdp-dev \
         linux-pam-dev \
         llvm \
         lttng-ust-dev \
@@ -100,7 +99,6 @@ RUN apk update && \
         sparse \
         spice-dev \
         spice-protocol \
-        swtpm \
         tar \
         tesseract-ocr \
         usbredir-dev \

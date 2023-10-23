@@ -29,9 +29,9 @@ static inline void set_feature(CPUTriCoreState *env, int feature)
     env->features |= 1ULL << feature;
 }
 
-static const gchar *tricore_gdb_arch_name(CPUState *cs)
+static gchar *tricore_gdb_arch_name(CPUState *cs)
 {
-    return "tricore";
+    return g_strdup("tricore");
 }
 
 static void tricore_cpu_set_pc(CPUState *cs, vaddr value)
@@ -122,6 +122,14 @@ static void tricore_cpu_realizefn(DeviceState *dev, Error **errp)
     qemu_init_vcpu(cs);
 
     tcc->parent_realize(dev, errp);
+}
+
+
+static void tricore_cpu_initfn(Object *obj)
+{
+    TriCoreCPU *cpu = TRICORE_CPU(obj);
+
+    cpu_set_cpustate_pointers(cpu);
 }
 
 static ObjectClass *tricore_cpu_class_by_name(const char *cpu_model)
@@ -222,7 +230,7 @@ static const TypeInfo tricore_cpu_type_infos[] = {
         .name = TYPE_TRICORE_CPU,
         .parent = TYPE_CPU,
         .instance_size = sizeof(TriCoreCPU),
-        .instance_align = __alignof(TriCoreCPU),
+        .instance_init = tricore_cpu_initfn,
         .abstract = true,
         .class_size = sizeof(TriCoreCPUClass),
         .class_init = tricore_cpu_class_init,

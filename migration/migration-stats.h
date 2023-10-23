@@ -90,10 +90,6 @@ typedef struct {
      */
     Stat64 rate_limit_max;
     /*
-     * Number of bytes sent through RDMA.
-     */
-    Stat64 rdma_bytes;
-    /*
      * Total number of bytes transferred.
      */
     Stat64 transferred;

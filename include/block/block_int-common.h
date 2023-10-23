@@ -235,14 +235,11 @@ struct BlockDriver {
                                 Error **errp);
 
     /* For handling image reopen for split or non-split files. */
-    int GRAPH_UNLOCKED_PTR (*bdrv_reopen_prepare)(
-        BDRVReopenState *reopen_state, BlockReopenQueue *queue, Error **errp);
-    void GRAPH_UNLOCKED_PTR (*bdrv_reopen_commit)(
-        BDRVReopenState *reopen_state);
-    void GRAPH_UNLOCKED_PTR (*bdrv_reopen_commit_post)(
-        BDRVReopenState *reopen_state);
-    void GRAPH_UNLOCKED_PTR (*bdrv_reopen_abort)(
-        BDRVReopenState *reopen_state);
+    int (*bdrv_reopen_prepare)(BDRVReopenState *reopen_state,
+                               BlockReopenQueue *queue, Error **errp);
+    void (*bdrv_reopen_commit)(BDRVReopenState *reopen_state);
+    void (*bdrv_reopen_commit_post)(BDRVReopenState *reopen_state);
+    void (*bdrv_reopen_abort)(BDRVReopenState *reopen_state);
     void (*bdrv_join_options)(QDict *options, QDict *old_options);
 
     int GRAPH_UNLOCKED_PTR (*bdrv_open)(
@@ -259,18 +256,20 @@ struct BlockDriver {
     int coroutine_fn GRAPH_UNLOCKED_PTR (*bdrv_co_create_opts)(
         BlockDriver *drv, const char *filename, QemuOpts *opts, Error **errp);
 
-    int GRAPH_RDLOCK_PTR (*bdrv_amend_options)(
-        BlockDriverState *bs, QemuOpts *opts,
-        BlockDriverAmendStatusCB *status_cb, void *cb_opaque,
-        bool force, Error **errp);
+    int (*bdrv_amend_options)(BlockDriverState *bs,
+                              QemuOpts *opts,
+                              BlockDriverAmendStatusCB *status_cb,
+                              void *cb_opaque,
+                              bool force,
+                              Error **errp);
 
-    int GRAPH_RDLOCK_PTR (*bdrv_make_empty)(BlockDriverState *bs);
+    int (*bdrv_make_empty)(BlockDriverState *bs);
 
     /*
      * Refreshes the bs->exact_filename field. If that is impossible,
      * bs->exact_filename has to be left empty.
      */
-    void GRAPH_RDLOCK_PTR (*bdrv_refresh_filename)(BlockDriverState *bs);
+    void (*bdrv_refresh_filename)(BlockDriverState *bs);
 
     /*
      * Gathers the open options for all children into @target.
@@ -293,15 +292,15 @@ struct BlockDriver {
      * block driver which implements it is probably doing something
      * shady regarding its runtime option structure.
      */
-    void GRAPH_RDLOCK_PTR (*bdrv_gather_child_options)(
-        BlockDriverState *bs, QDict *target, bool backing_overridden);
+    void (*bdrv_gather_child_options)(BlockDriverState *bs, QDict *target,
+                                      bool backing_overridden);
 
     /*
      * Returns an allocated string which is the directory name of this BDS: It
      * will be used to make relative filenames absolute by prepending this
      * function's return value to them.
      */
-    char * GRAPH_RDLOCK_PTR (*bdrv_dirname)(BlockDriverState *bs, Error **errp);
+    char *(*bdrv_dirname)(BlockDriverState *bs, Error **errp);
 
     /*
      * This informs the driver that we are no longer interested in the result
@@ -312,18 +311,16 @@ struct BlockDriver {
      */
     void (*bdrv_cancel_in_flight)(BlockDriverState *bs);
 
-    int GRAPH_RDLOCK_PTR (*bdrv_inactivate)(BlockDriverState *bs);
+    int (*bdrv_inactivate)(BlockDriverState *bs);
 
-    int GRAPH_RDLOCK_PTR (*bdrv_snapshot_create)(
-        BlockDriverState *bs, QEMUSnapshotInfo *sn_info);
-
-    int GRAPH_UNLOCKED_PTR (*bdrv_snapshot_goto)(
-        BlockDriverState *bs, const char *snapshot_id);
-
-    int GRAPH_RDLOCK_PTR (*bdrv_snapshot_delete)(
-        BlockDriverState *bs, const char *snapshot_id, const char *name,
-        Error **errp);
-
+    int (*bdrv_snapshot_create)(BlockDriverState *bs,
+                                QEMUSnapshotInfo *sn_info);
+    int (*bdrv_snapshot_goto)(BlockDriverState *bs,
+                              const char *snapshot_id);
+    int (*bdrv_snapshot_delete)(BlockDriverState *bs,
+                                const char *snapshot_id,
+                                const char *name,
+                                Error **errp);
     int (*bdrv_snapshot_list)(BlockDriverState *bs,
                               QEMUSnapshotInfo **psn_info);
     int (*bdrv_snapshot_load_tmp)(BlockDriverState *bs,
@@ -396,11 +393,10 @@ struct BlockDriver {
      */
     int (*bdrv_probe_geometry)(BlockDriverState *bs, HDGeometry *geo);
 
-    void GRAPH_WRLOCK_PTR (*bdrv_add_child)(
-        BlockDriverState *parent, BlockDriverState *child, Error **errp);
-
-    void GRAPH_WRLOCK_PTR (*bdrv_del_child)(
-        BlockDriverState *parent, BdrvChild *child, Error **errp);
+    void (*bdrv_add_child)(BlockDriverState *parent, BlockDriverState *child,
+                           Error **errp);
+    void (*bdrv_del_child)(BlockDriverState *parent, BdrvChild *child,
+                           Error **errp);
 
     /**
      * Informs the block driver that a permission change is intended. The
@@ -417,12 +413,12 @@ struct BlockDriver {
      * If both conditions are met, 0 is returned. Otherwise, -errno is returned
      * and errp is set to an error describing the conflict.
      */
-    int GRAPH_RDLOCK_PTR (*bdrv_check_perm)(BlockDriverState *bs, uint64_t perm,
-                                            uint64_t shared, Error **errp);
+    int (*bdrv_check_perm)(BlockDriverState *bs, uint64_t perm,
+                           uint64_t shared, Error **errp);
 
     /**
      * Called to inform the driver that the set of cumulative set of used
-     * permissions for @bs has changed to @perm, and the set of shareable
+     * permissions for @bs has changed to @perm, and the set of sharable
      * permission to @shared. The driver can use this to propagate changes to
      * its children (i.e. request permissions only if a parent actually needs
      * them).
@@ -430,8 +426,7 @@ struct BlockDriver {
      * This function is only invoked after bdrv_check_perm(), so block drivers
      * may rely on preparations made in their .bdrv_check_perm implementation.
      */
-    void GRAPH_RDLOCK_PTR (*bdrv_set_perm)(
-        BlockDriverState *bs, uint64_t perm, uint64_t shared);
+    void (*bdrv_set_perm)(BlockDriverState *bs, uint64_t perm, uint64_t shared);
 
     /*
      * Called to inform the driver that after a previous bdrv_check_perm()
@@ -441,7 +436,7 @@ struct BlockDriver {
      * This function can be called even for nodes that never saw a
      * bdrv_check_perm() call. It is a no-op then.
      */
-    void GRAPH_RDLOCK_PTR (*bdrv_abort_perm_update)(BlockDriverState *bs);
+    void (*bdrv_abort_perm_update)(BlockDriverState *bs);
 
     /**
      * Returns in @nperm and @nshared the permissions that the driver for @bs
@@ -455,11 +450,11 @@ struct BlockDriver {
      * permissions, but those that will be needed after applying the
      * @reopen_queue.
      */
-     void GRAPH_RDLOCK_PTR (*bdrv_child_perm)(
-        BlockDriverState *bs, BdrvChild *c, BdrvChildRole role,
-        BlockReopenQueue *reopen_queue,
-        uint64_t parent_perm, uint64_t parent_shared,
-        uint64_t *nperm, uint64_t *nshared);
+     void (*bdrv_child_perm)(BlockDriverState *bs, BdrvChild *c,
+                             BdrvChildRole role,
+                             BlockReopenQueue *reopen_queue,
+                             uint64_t parent_perm, uint64_t parent_shared,
+                             uint64_t *nperm, uint64_t *nshared);
 
     /**
      * Register/unregister a buffer for I/O. For example, when the driver is
@@ -728,8 +723,8 @@ struct BlockDriver {
     int coroutine_fn GRAPH_RDLOCK_PTR (*bdrv_co_get_info)(
         BlockDriverState *bs, BlockDriverInfo *bdi);
 
-    ImageInfoSpecific * GRAPH_RDLOCK_PTR (*bdrv_get_specific_info)(
-        BlockDriverState *bs, Error **errp);
+    ImageInfoSpecific *(*bdrv_get_specific_info)(BlockDriverState *bs,
+                                                 Error **errp);
     BlockStatsSpecific *(*bdrv_get_specific_stats)(BlockDriverState *bs);
 
     int coroutine_fn GRAPH_RDLOCK_PTR (*bdrv_co_save_vmstate)(
@@ -949,8 +944,8 @@ struct BdrvChildClass {
      * when migration is completing) and it can start/stop requesting
      * permissions and doing I/O on it.
      */
-    void GRAPH_RDLOCK_PTR (*activate)(BdrvChild *child, Error **errp);
-    int GRAPH_RDLOCK_PTR (*inactivate)(BdrvChild *child);
+    void (*activate)(BdrvChild *child, Error **errp);
+    int (*inactivate)(BdrvChild *child);
 
     void GRAPH_WRLOCK_PTR (*attach)(BdrvChild *child);
     void GRAPH_WRLOCK_PTR (*detach)(BdrvChild *child);
@@ -966,15 +961,15 @@ struct BdrvChildClass {
      * Note that this can be nested. If drained_begin() was called twice, new
      * I/O is allowed only after drained_end() was called twice, too.
      */
-    void GRAPH_RDLOCK_PTR (*drained_begin)(BdrvChild *child);
-    void GRAPH_RDLOCK_PTR (*drained_end)(BdrvChild *child);
+    void (*drained_begin)(BdrvChild *child);
+    void (*drained_end)(BdrvChild *child);
 
     /*
      * Returns whether the parent has pending requests for the child. This
      * callback is polled after .drained_begin() has been called until all
      * activity on the child has stopped.
      */
-    bool GRAPH_RDLOCK_PTR (*drained_poll)(BdrvChild *child);
+    bool (*drained_poll)(BdrvChild *child);
 
     /*
      * Notifies the parent that the filename of its child has changed (e.g.
@@ -1042,8 +1037,8 @@ struct BdrvChild {
      */
     bool quiesced_parent;
 
-    QLIST_ENTRY(BdrvChild GRAPH_RDLOCK_PTR) next;
-    QLIST_ENTRY(BdrvChild GRAPH_RDLOCK_PTR) next_parent;
+    QLIST_ENTRY(BdrvChild) next;
+    QLIST_ENTRY(BdrvChild) next_parent;
 };
 
 /*
@@ -1176,11 +1171,11 @@ struct BlockDriverState {
      * See also comment in include/block/block.h, to learn how backing and file
      * are connected with BdrvChildRole.
      */
-    QLIST_HEAD(, BdrvChild GRAPH_RDLOCK_PTR) children;
+    QLIST_HEAD(, BdrvChild) children;
     BdrvChild *backing;
     BdrvChild *file;
 
-    QLIST_HEAD(, BdrvChild GRAPH_RDLOCK_PTR) parents;
+    QLIST_HEAD(, BdrvChild) parents;
 
     QDict *options;
     QDict *explicit_options;
@@ -1236,7 +1231,7 @@ struct BlockDriverState {
     unsigned int write_gen;               /* Current data generation */
 
     /* Protected by reqs_lock.  */
-    QemuMutex reqs_lock;
+    CoMutex reqs_lock;
     QLIST_HEAD(, BdrvTrackedRequest) tracked_requests;
     CoQueue flush_queue;                  /* Serializing flush queue */
     bool active_flush_req;                /* Flush request in flight? */

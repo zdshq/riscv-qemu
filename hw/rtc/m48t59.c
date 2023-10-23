@@ -133,7 +133,7 @@ static void alarm_cb (void *opaque)
 
 static void set_alarm(M48t59State *NVRAM)
 {
-    int64_t diff;
+    int diff;
     if (NVRAM->alrm_timer != NULL) {
         timer_del(NVRAM->alrm_timer);
         diff = qemu_timedate_diff(&NVRAM->alarm) - NVRAM->time_offset;

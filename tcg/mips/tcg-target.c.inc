@@ -190,7 +190,7 @@ static bool is_p2m1(tcg_target_long val)
 }
 
 /* test if a constant matches the constraint */
-static bool tcg_target_const_match(int64_t val, TCGType type, int ct, int vece)
+static bool tcg_target_const_match(int64_t val, TCGType type, int ct)
 {
     if (ct & TCG_CT_CONST) {
         return 1;
@@ -1258,8 +1258,8 @@ bool tcg_target_has_memory_bswap(MemOp memop)
 #define MIN_TLB_MASK_TABLE_OFS  -32768
 
 /*
- * For system-mode, perform the TLB load and compare.
- * For user-mode, perform any required alignment tests.
+ * For softmmu, perform the TLB load and compare.
+ * For useronly, perform any required alignment tests.
  * In both cases, return a TCGLabelQemuLdst structure if the slow path
  * is required and fill in @h with the host address for the fast path.
  */
@@ -2626,11 +2626,6 @@ static void tcg_target_qemu_prologue(TCGContext *s)
     tcg_out_opc_reg(s, OPC_JR, 0, TCG_REG_RA, 0);
     /* t3 = hgfedcba -- delay slot */
     tcg_out_opc_reg(s, OPC_OR, TCG_TMP3, TCG_TMP3, TCG_TMP1);
-}
-
-static void tcg_out_tb_start(TCGContext *s)
-{
-    /* nothing to do */
 }
 
 static void tcg_target_init(TCGContext *s)

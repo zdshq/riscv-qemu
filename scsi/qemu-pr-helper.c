@@ -735,7 +735,8 @@ static void coroutine_fn prh_co_entry(void *opaque)
 
     qio_channel_set_blocking(QIO_CHANNEL(client->ioc),
                              false, NULL);
-    qio_channel_set_follow_coroutine_ctx(QIO_CHANNEL(client->ioc), true);
+    qio_channel_attach_aio_context(QIO_CHANNEL(client->ioc),
+                                   qemu_get_aio_context());
 
     /* A very simple negotiation for future extensibility.  No features
      * are defined so write 0.
@@ -795,6 +796,7 @@ static void coroutine_fn prh_co_entry(void *opaque)
     }
 
 out:
+    qio_channel_detach_aio_context(QIO_CHANNEL(client->ioc));
     object_unref(OBJECT(client->ioc));
     g_free(client);
 }

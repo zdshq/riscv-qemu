@@ -263,7 +263,7 @@ static int pxb_map_irq_fn(PCIDevice *pci_dev, int pin)
 
     /*
      * First carry out normal swizzle to handle
-     * multiple root ports on a pxb instance.
+     * multple root ports on a pxb instance.
      */
     pin = pci_swizzle_map_irq_fn(pci_dev, pin);
 

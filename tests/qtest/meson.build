@@ -38,8 +38,8 @@ qtests_cxl = \
 #        for the availability of the default NICs in the tests
 qtests_filter = \
   (get_option('default_devices') and slirp.found() ? ['test-netfilter'] : []) + \
-  (get_option('default_devices') and targetos != 'windows' ? ['test-filter-mirror'] : []) + \
-  (get_option('default_devices') and targetos != 'windows' ? ['test-filter-redirector'] : [])
+  (get_option('default_devices') and config_host.has_key('CONFIG_POSIX') ? ['test-filter-mirror'] : []) + \
+  (get_option('default_devices') and config_host.has_key('CONFIG_POSIX') ? ['test-filter-redirector'] : [])
 
 qtests_i386 = \
   (slirp.found() ? ['pxe-test'] : []) + \
@@ -48,7 +48,7 @@ qtests_i386 = \
   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +           \
   (config_all_devices.has_key('CONFIG_SGA') ? ['boot-serial-test'] : []) +                  \
   (config_all_devices.has_key('CONFIG_ISA_IPMI_KCS') ? ['ipmi-kcs-test'] : []) +            \
-  (targetos == 'linux' and                                                                  \
+  (config_host.has_key('CONFIG_LINUX') and                                                  \
    config_all_devices.has_key('CONFIG_ISA_IPMI_BT') and
    config_all_devices.has_key('CONFIG_IPMI_EXTERN') ? ['ipmi-bt-test'] : []) +              \
   (config_all_devices.has_key('CONFIG_WDT_IB700') ? ['wdt_ib700-test'] : []) +              \
@@ -74,7 +74,7 @@ qtests_i386 = \
   (config_all_devices.has_key('CONFIG_SB16') ? ['fuzz-sb16-test'] : []) +                   \
   (config_all_devices.has_key('CONFIG_SDHCI_PCI') ? ['fuzz-sdcard-test'] : []) +            \
   (config_all_devices.has_key('CONFIG_ESP_PCI') ? ['am53c974-test'] : []) +                 \
-  (targetos != 'windows' and                                                                \
+  (config_host.has_key('CONFIG_POSIX') and                                                  \
    config_all_devices.has_key('CONFIG_ACPI_ERST') ? ['erst-test'] : []) +                   \
   (config_all_devices.has_key('CONFIG_PCIE_PORT') and                                       \
    config_all_devices.has_key('CONFIG_VIRTIO_NET') and                                      \
@@ -155,8 +155,8 @@ qtests_ppc = \
   qtests_filter + \
   (config_all_devices.has_key('CONFIG_ISA_TESTDEV') ? ['endianness-test'] : []) +            \
   (config_all_devices.has_key('CONFIG_M48T59') ? ['m48t59-test'] : []) +                     \
-  (config_all.has_key('CONFIG_TCG') ? ['prom-env-test'] : []) +                              \
-  (config_all.has_key('CONFIG_TCG') ? ['boot-serial-test'] : []) +                           \
+  (config_all_devices.has_key('CONFIG_TCG') ? ['prom-env-test'] : []) +                      \
+  (config_all_devices.has_key('CONFIG_TCG') ? ['boot-serial-test'] : []) +                   \
   ['boot-order-test']
 
 qtests_ppc64 = \
@@ -269,14 +269,13 @@ qos_test_ss.add(
   'virtio-iommu-test.c',
   'vmxnet3-test.c',
   'igb-test.c',
-  'ufs-test.c',
 )
 
 if config_all_devices.has_key('CONFIG_VIRTIO_SERIAL')
   qos_test_ss.add(files('virtio-serial-test.c'))
 endif
 
-if targetos != 'windows'
+if config_host.has_key('CONFIG_POSIX')
   qos_test_ss.add(files('e1000e-test.c'))
 endif
 if have_virtfs
@@ -309,7 +308,7 @@ qtests = {
   'ivshmem-test': [rt, '../../contrib/ivshmem-server/ivshmem-server.c'],
   'migration-test': migration_files,
   'pxe-test': files('boot-sector.c'),
-  'qos-test': [chardev, io, qos_test_ss.apply(config_targetos, strict: false).sources()],
+  'qos-test': [chardev, io, qos_test_ss.apply(config_host, strict: false).sources()],
   'tpm-crb-swtpm-test': [io, tpmemu_files],
   'tpm-crb-test': [io, tpmemu_files],
   'tpm-tis-swtpm-test': [io, tpmemu_files, 'tpm-tis-util.c'],
@@ -317,13 +316,12 @@ qtests = {
   'tpm-tis-i2c-test': [io, tpmemu_files, 'qtest_aspeed.c'],
   'tpm-tis-device-swtpm-test': [io, tpmemu_files, 'tpm-tis-util.c'],
   'tpm-tis-device-test': [io, tpmemu_files, 'tpm-tis-util.c'],
-  'virtio-net-failover': files('migration-helpers.c'),
   'vmgenid-test': files('boot-sector.c', 'acpi-utils.c'),
   'netdev-socket': files('netdev-socket.c', '../unit/socket-helpers.c'),
 }
 
 if vnc.found()
-  gvnc = dependency('gvnc-1.0', method: 'pkg-config', required: false)
+  gvnc = dependency('gvnc-1.0', required: false)
   if gvnc.found()
     qtests += {'vnc-display-test': [gvnc]}
     qtests_generic += [ 'vnc-display-test' ]
@@ -356,8 +354,6 @@ foreach dir : target_dirs
     qtest_env.set('QTEST_QEMU_STORAGE_DAEMON_BINARY', './storage-daemon/qemu-storage-daemon')
     test_deps += [qsd]
   endif
-
-  qtest_env.set('PYTHON', python.full_path())
 
   foreach test : target_qtests
     # Executables are shared across targets, declare them only the first time we

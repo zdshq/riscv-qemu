@@ -759,8 +759,7 @@ static void esp_do_nodma(ESPState *s)
     }
 
     if (to_device) {
-        len = MIN(s->async_len, ESP_FIFO_SZ);
-        len = MIN(len, fifo8_num_used(&s->fifo));
+        len = MIN(fifo8_num_used(&s->fifo), ESP_FIFO_SZ);
         esp_fifo_pop_buf(&s->fifo, s->async_buf, len);
         s->async_buf += len;
         s->async_len -= len;
@@ -1396,7 +1395,7 @@ static void sysbus_esp_gpio_demux(void *opaque, int irq, int level)
         parent_esp_reset(s, irq, level);
         break;
     case 1:
-        esp_dma_enable(s, irq, level);
+        esp_dma_enable(opaque, irq, level);
         break;
     }
 }

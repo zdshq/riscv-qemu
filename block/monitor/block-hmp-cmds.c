@@ -144,9 +144,6 @@ void hmp_drive_del(Monitor *mon, const QDict *qdict)
     AioContext *aio_context;
     Error *local_err = NULL;
 
-    GLOBAL_STATE_CODE();
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
-
     bs = bdrv_find_node(id);
     if (bs) {
         qmp_blockdev_del(id, &local_err);
@@ -871,7 +868,7 @@ void hmp_info_block_jobs(Monitor *mon, const QDict *qdict)
 }
 
 void hmp_info_snapshots(Monitor *mon, const QDict *qdict)
-{
+ {
     BlockDriverState *bs, *bs1;
     BdrvNextIterator it1;
     QEMUSnapshotInfo *sn_tab, *sn;
@@ -898,8 +895,6 @@ void hmp_info_snapshots(Monitor *mon, const QDict *qdict)
     ImageEntry *image_entry, *next_ie;
     SnapshotEntry *snapshot_entry;
     Error *err = NULL;
-
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     bs = bdrv_all_find_vmstate_bs(NULL, false, NULL, &err);
     if (!bs) {

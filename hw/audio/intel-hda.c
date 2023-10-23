@@ -71,7 +71,9 @@ static void hda_codec_dev_realize(DeviceState *qdev, Error **errp)
         return;
     }
     bus->next_cad = dev->cad + 1;
-    cdc->init(dev, errp);
+    if (cdc->init(dev) != 0) {
+        error_setg(errp, "HDA audio init failed");
+    }
 }
 
 static void hda_codec_dev_unrealize(DeviceState *qdev)

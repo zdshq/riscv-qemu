@@ -402,7 +402,7 @@ static void usb_hub_handle_control(USBDevice *dev, USBPacket *p,
         {
             unsigned int n = index - 1;
             USBHubPort *port;
-            USBDevice *pdev;
+            USBDevice *dev;
 
             trace_usb_hub_set_port_feature(s->dev.addr, index,
                                            feature_name(value));
@@ -411,7 +411,7 @@ static void usb_hub_handle_control(USBDevice *dev, USBPacket *p,
                 goto fail;
             }
             port = &s->ports[n];
-            pdev = port->port.dev;
+            dev = port->port.dev;
             switch(value) {
             case PORT_SUSPEND:
                 port->wPortStatus |= PORT_STAT_SUSPEND;
@@ -419,8 +419,8 @@ static void usb_hub_handle_control(USBDevice *dev, USBPacket *p,
             case PORT_RESET:
                 usb_hub_port_set(port, PORT_STAT_RESET);
                 usb_hub_port_clear(port, PORT_STAT_RESET);
-                if (pdev && pdev->attached) {
-                    usb_device_reset(pdev);
+                if (dev && dev->attached) {
+                    usb_device_reset(dev);
                     usb_hub_port_set(port, PORT_STAT_ENABLE);
                 }
                 usb_wakeup(s->intr, 0);

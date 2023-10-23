@@ -108,11 +108,6 @@ static int kvm_ppc_register_host_cpu_type(void);
 static void kvmppc_get_cpu_characteristics(KVMState *s);
 static int kvmppc_get_dec_bits(void);
 
-int kvm_arch_get_default_type(MachineState *ms)
-{
-    return 0;
-}
-
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     cap_interrupt_unset = kvm_check_extension(s, KVM_CAP_PPC_UNSET_IRQ);
@@ -960,6 +955,8 @@ int kvm_arch_put_registers(CPUState *cs, int level)
     }
 
     if (cap_one_reg) {
+        int i;
+
         /*
          * We deliberately ignore errors here, for kernels which have
          * the ONE_REG calls, but don't support the specific
@@ -1260,6 +1257,8 @@ int kvm_arch_get_registers(CPUState *cs)
     }
 
     if (cap_one_reg) {
+        int i;
+
         /*
          * We deliberately ignore errors here, for kernels which have
          * the ONE_REG calls, but don't support the specific
@@ -1316,7 +1315,7 @@ int kvmppc_set_interrupt(PowerPCCPU *cpu, int irq, int level)
         return 0;
     }
 
-    if (!cap_interrupt_unset) {
+    if (!kvm_enabled() || !cap_interrupt_unset) {
         return 0;
     }
 
@@ -1445,15 +1444,15 @@ static int find_hw_watchpoint(target_ulong addr, int *flag)
     return -1;
 }
 
-int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_insert_hw_breakpoint(target_ulong addr,
+                                  target_ulong len, int type)
 {
-    const unsigned breakpoint_index = nb_hw_breakpoint + nb_hw_watchpoint;
-    if (breakpoint_index >= ARRAY_SIZE(hw_debug_points)) {
+    if ((nb_hw_breakpoint + nb_hw_watchpoint) >= ARRAY_SIZE(hw_debug_points)) {
         return -ENOBUFS;
     }
 
-    hw_debug_points[breakpoint_index].addr = addr;
-    hw_debug_points[breakpoint_index].type = type;
+    hw_debug_points[nb_hw_breakpoint + nb_hw_watchpoint].addr = addr;
+    hw_debug_points[nb_hw_breakpoint + nb_hw_watchpoint].type = type;
 
     switch (type) {
     case GDB_BREAKPOINT_HW:
@@ -1489,7 +1488,8 @@ int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
     return 0;
 }
 
-int kvm_arch_remove_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_remove_hw_breakpoint(target_ulong addr,
+                                  target_ulong len, int type)
 {
     int n;
 

@@ -66,7 +66,7 @@ class TestGraphChangesWhileIO(QMPTestCase):
         # While qemu-img bench is running, repeatedly add and remove an
         # overlay to/from node0
         while bench_thr.is_alive():
-            self.qsd.cmd('blockdev-add', {
+            result = self.qsd.qmp('blockdev-add', {
                 'driver': imgfmt,
                 'node-name': 'overlay',
                 'backing': 'node0',
@@ -75,10 +75,12 @@ class TestGraphChangesWhileIO(QMPTestCase):
                     'filename': top
                 }
             })
+            self.assert_qmp(result, 'return', {})
 
-            self.qsd.cmd('blockdev-del', {
+            result = self.qsd.qmp('blockdev-del', {
                 'node-name': 'overlay'
             })
+            self.assert_qmp(result, 'return', {})
 
         bench_thr.join()
 
@@ -90,7 +92,7 @@ class TestGraphChangesWhileIO(QMPTestCase):
         qemu_io('-c', 'write 0 64k', top)
         qemu_io('-c', 'write 128k 64k', top)
 
-        self.qsd.cmd('blockdev-add', {
+        result = self.qsd.qmp('blockdev-add', {
             'driver': imgfmt,
             'node-name': 'overlay',
             'backing': None,
@@ -99,22 +101,26 @@ class TestGraphChangesWhileIO(QMPTestCase):
                 'filename': top
             }
         })
+        self.assert_qmp(result, 'return', {})
 
-        self.qsd.cmd('blockdev-snapshot', {
+        result = self.qsd.qmp('blockdev-snapshot', {
             'node': 'node0',
             'overlay': 'overlay',
         })
+        self.assert_qmp(result, 'return', {})
 
         # While qemu-img bench is running, repeatedly commit overlay to node0
         while bench_thr.is_alive():
-            self.qsd.cmd('block-commit', {
+            result = self.qsd.qmp('block-commit', {
                 'job-id': 'job0',
                 'device': 'overlay',
             })
+            self.assert_qmp(result, 'return', {})
 
-            self.qsd.cmd('block-job-cancel', {
+            result = self.qsd.qmp('block-job-cancel', {
                 'device': 'job0',
             })
+            self.assert_qmp(result, 'return', {})
 
             cancelled = False
             while not cancelled:

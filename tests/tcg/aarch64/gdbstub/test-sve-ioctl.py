@@ -76,6 +76,9 @@ except (gdb.error, AttributeError):
     exit(0)
 
 try:
+    # These are not very useful in scripts
+    gdb.execute("set pagination off")
+
     # Run the actual tests
     run_test()
 except:

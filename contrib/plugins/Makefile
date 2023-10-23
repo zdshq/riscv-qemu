@@ -6,11 +6,11 @@
 # programs that the main configure has already done for us.
 #
 
-include config-host.mak
+BUILD_DIR := $(CURDIR)/../..
 
-TOP_SRC_PATH = $(SRC_PATH)/../..
+include $(BUILD_DIR)/config-host.mak
 
-VPATH += $(SRC_PATH)
+VPATH += $(SRC_PATH)/contrib/plugins
 
 NAMES :=
 NAMES += execlog
@@ -26,25 +26,21 @@ SONAMES := $(addsuffix .so,$(addprefix lib,$(NAMES)))
 
 # The main QEMU uses Glib extensively so it's perfectly fine to use it
 # in plugins (which many example do).
-PLUGIN_CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0)
-PLUGIN_CFLAGS += -fPIC -Wall
-PLUGIN_CFLAGS += -I$(TOP_SRC_PATH)/include/qemu
+CFLAGS := $(shell $(PKG_CONFIG) --cflags glib-2.0)
+CFLAGS += -fPIC -Wall
+CFLAGS += $(if $(CONFIG_DEBUG_TCG), -ggdb -O0)
+CFLAGS += -I$(SRC_PATH)/include/qemu
 
 all: $(SONAMES)
 
 %.o: %.c
-	$(CC) $(CFLAGS) $(PLUGIN_CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 lib%.so: %.o
-ifeq ($(CONFIG_DARWIN),y)
-	$(CC) -bundle -Wl,-undefined,dynamic_lookup -o $@ $^ $(LDLIBS)
-else
-	$(CC) -shared -o $@ $^ $(LDLIBS)
-endif
+	$(CC) -shared -Wl,-soname,$@ -o $@ $^ $(LDLIBS)
 
 clean:
 	rm -f *.o *.so *.d
 	rm -Rf .libs
 
 .PHONY: all clean
-.SECONDARY:

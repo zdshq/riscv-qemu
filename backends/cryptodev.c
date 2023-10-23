@@ -252,11 +252,10 @@ static void cryptodev_backend_throttle_timer_cb(void *opaque)
             continue;
         }
 
-        throttle_account(&backend->ts, THROTTLE_WRITE, ret);
+        throttle_account(&backend->ts, true, ret);
         cryptodev_backend_operation(backend, op_info);
         if (throttle_enabled(&backend->tc) &&
-            throttle_schedule_timer(&backend->ts, &backend->tt,
-                                    THROTTLE_WRITE)) {
+            throttle_schedule_timer(&backend->ts, &backend->tt, true)) {
             break;
         }
     }
@@ -272,7 +271,7 @@ int cryptodev_backend_crypto_operation(
         goto do_account;
     }
 
-    if (throttle_schedule_timer(&backend->ts, &backend->tt, THROTTLE_WRITE) ||
+    if (throttle_schedule_timer(&backend->ts, &backend->tt, true) ||
         !QTAILQ_EMPTY(&backend->opinfos)) {
         QTAILQ_INSERT_TAIL(&backend->opinfos, op_info, next);
         return 0;
@@ -284,7 +283,7 @@ do_account:
         return ret;
     }
 
-    throttle_account(&backend->ts, THROTTLE_WRITE, ret);
+    throttle_account(&backend->ts, true, ret);
 
     return cryptodev_backend_operation(backend, op_info);
 }
@@ -342,7 +341,8 @@ static void cryptodev_backend_set_throttle(CryptoDevBackend *backend, int field,
     if (!enabled) {
         throttle_init(&backend->ts);
         throttle_timers_init(&backend->tt, qemu_get_aio_context(),
-                             QEMU_CLOCK_REALTIME, NULL,
+                             QEMU_CLOCK_REALTIME,
+                             cryptodev_backend_throttle_timer_cb, /* FIXME */
                              cryptodev_backend_throttle_timer_cb, backend);
     }
 

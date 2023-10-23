@@ -109,14 +109,9 @@ int kvm_irqchip_remove_irqfd_notifier_gsi(KVMState *s, EventNotifier *n,
     return -ENOSYS;
 }
 
-unsigned int kvm_get_max_memslots(void)
+bool kvm_has_free_slot(MachineState *ms)
 {
-    return 0;
-}
-
-unsigned int kvm_get_free_memslots(void)
-{
-    return 0;
+    return false;
 }
 
 void kvm_init_cpu_signals(CPUState *cpu)

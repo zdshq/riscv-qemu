@@ -97,11 +97,6 @@ static void GLUE_set_irq(void *opaque, int irq, int level)
             irq = 6;
             break;
 
-        case GLUE_IRQ_IN_ASC:
-            /* Route to VIA2 instead, negative edge-triggered */
-            qemu_set_irq(s->irqs[GLUE_IRQ_ASC], !level);
-            return;
-
         default:
             g_assert_not_reached();
         }
@@ -126,10 +121,6 @@ static void GLUE_set_irq(void *opaque, int irq, int level)
 
         case GLUE_IRQ_IN_NMI:
             irq = 6;
-            break;
-
-        case GLUE_IRQ_IN_ASC:
-            irq = 4;
             break;
 
         default:
@@ -175,9 +166,9 @@ static void glue_nmi_release(void *opaque)
     GLUE_set_irq(s, GLUE_IRQ_IN_NMI, 0);
 }
 
-static void glue_reset_hold(Object *obj)
+static void glue_reset(DeviceState *dev)
 {
-    GLUEState *s = GLUE(obj);
+    GLUEState *s = GLUE(dev);
 
     s->ipr = 0;
     s->auxmode = 0;
@@ -223,7 +214,7 @@ static void glue_init(Object *obj)
     qdev_init_gpio_in(dev, GLUE_set_irq, 8);
     qdev_init_gpio_in_named(dev, glue_auxmode_set_irq, "auxmode", 1);
 
-    qdev_init_gpio_out(dev, s->irqs, 2);
+    qdev_init_gpio_out(dev, s->irqs, 1);
 
     /* NMI release timer */
     s->nmi_release = timer_new_ms(QEMU_CLOCK_VIRTUAL, glue_nmi_release, s);
@@ -232,12 +223,11 @@ static void glue_init(Object *obj)
 static void glue_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
-    ResettableClass *rc = RESETTABLE_CLASS(klass);
     NMIClass *nc = NMI_CLASS(klass);
 
     dc->vmsd = &vmstate_glue;
+    dc->reset = glue_reset;
     device_class_set_props(dc, glue_properties);
-    rc->phases.hold = glue_reset_hold;
     nc->nmi_monitor_handler = glue_nmi;
 }
 

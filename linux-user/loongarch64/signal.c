@@ -12,7 +12,6 @@
 #include "linux-user/trace.h"
 
 #include "target/loongarch/internals.h"
-#include "target/loongarch/vec.h"
 
 /* FP context was used */
 #define SC_USED_FP              (1 << 0)

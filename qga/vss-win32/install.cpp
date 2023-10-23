@@ -343,7 +343,7 @@ STDAPI COMRegister(void)
                                    _bstr_t(dllPath), _bstr_t(tlbPath),
                                    _bstr_t("")));
 
-    /* Setup roles of the application */
+    /* Setup roles of the applicaion */
 
     chk(getNameByStringSID(administratorsGroupSID, buffer, &bufferLen));
     chk(pApps->GetCollection(_bstr_t(L"Roles"), key,
@@ -439,7 +439,7 @@ STDAPI DllRegisterServer(void)
         goto out;
     }
 
-    /* Add this module to registry */
+    /* Add this module to registery */
 
     sprintf(key, "CLSID\\%s", g_szClsid);
     if (!CreateRegistryKey(key, NULL, g_szClsid)) {

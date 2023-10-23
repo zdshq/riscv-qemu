@@ -71,7 +71,7 @@ _start:
         add $8,%esp
 
         /*
-         * Don't worry about stack frame, assume everything
+         * Don't worry about stack frame, assume everthing
          * is garbage when we return, we won't need it.
          */
         call main

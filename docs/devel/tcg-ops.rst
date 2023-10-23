@@ -498,12 +498,6 @@ Conditional moves
        |
        | Set *dest* to 1 if (*t1* *cond* *t2*) is true, otherwise set to 0.
 
-   * - negsetcond_i32/i64 *dest*, *t1*, *t2*, *cond*
-
-     - | *dest* = -(*t1* *cond* *t2*)
-       |
-       | Set *dest* to -1 if (*t1* *cond* *t2*) is true, otherwise set to 0.
-
    * - movcond_i32/i64 *dest*, *c1*, *c2*, *v1*, *v2*, *cond*
 
      - | *dest* = (*c1* *cond* *c2* ? *v1* : *v2*)
@@ -718,9 +712,7 @@ E.g. VECL = 1 -> 64 << 1 -> v128, and VECE = 2 -> 1 << 2 -> i32.
 .. list-table::
 
    * - mov_vec *v0*, *v1*
-
        ld_vec *v0*, *t1*
-
        st_vec *v0*, *t1*
 
      - | Move, load and store.
@@ -890,15 +882,14 @@ sub2_i32, brcond2_i32).
 On a 64 bit target, the values are transferred between 32 and 64-bit
 registers using the following ops:
 
-- extrl_i64_i32
-- extrh_i64_i32
+- trunc_shr_i64_i32
 - ext_i32_i64
 - extu_i32_i64
 
 They ensure that the values are correctly truncated or extended when
 moved from a 32-bit to a 64-bit register or vice-versa. Note that the
-extrl_i64_i32 and extrh_i64_i32 are optional ops. It is not necessary
-to implement them if all the following conditions are met:
+trunc_shr_i64_i32 is an optional op. It is not necessary to implement
+it if all the following conditions are met:
 
 - 64-bit registers can hold 32-bit values
 - 32-bit values in a 64-bit register do not need to stay zero or

@@ -571,7 +571,7 @@ static int sortelem_cmp_src_index(const void *a, const void *b)
  */
 void qemu_iovec_clone(QEMUIOVector *dest, const QEMUIOVector *src, void *buf)
 {
-    g_autofree IOVectorSortElem *sortelems = g_new(IOVectorSortElem, src->niov);
+    IOVectorSortElem sortelems[src->niov];
     void *last_end;
     int i;
 

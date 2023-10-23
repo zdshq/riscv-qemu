@@ -327,6 +327,13 @@ static void m68k_cpu_realizefn(DeviceState *dev, Error **errp)
     mcc->parent_realize(dev, errp);
 }
 
+static void m68k_cpu_initfn(Object *obj)
+{
+    M68kCPU *cpu = M68K_CPU(obj);
+
+    cpu_set_cpustate_pointers(cpu);
+}
+
 #if !defined(CONFIG_USER_ONLY)
 static bool fpu_needed(void *opaque)
 {
@@ -604,7 +611,7 @@ static const TypeInfo m68k_cpus_type_infos[] = {
         .name = TYPE_M68K_CPU,
         .parent = TYPE_CPU,
         .instance_size = sizeof(M68kCPU),
-        .instance_align = __alignof(M68kCPU),
+        .instance_init = m68k_cpu_initfn,
         .abstract = true,
         .class_size = sizeof(M68kCPUClass),
         .class_init = m68k_cpu_class_init,

@@ -368,9 +368,7 @@ static void unset_dirty_tracking(void)
     BlkMigDevState *bmds;
 
     QSIMPLEQ_FOREACH(bmds, &block_mig_state.bmds_list, entry) {
-        if (bmds->dirty_bitmap) {
-            bdrv_release_dirty_bitmap(bmds->dirty_bitmap);
-        }
+        bdrv_release_dirty_bitmap(bmds->dirty_bitmap);
     }
 }
 
@@ -387,8 +385,6 @@ static int init_blk_migration(QEMUFile *f)
     } *bmds_bs;
     Error *local_err = NULL;
     int ret;
-
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     block_mig_state.submitted = 0;
     block_mig_state.read_done = 0;
@@ -442,8 +438,8 @@ static int init_blk_migration(QEMUFile *f)
     /* Can only insert new BDSes now because doing so while iterating block
      * devices may end up in a deadlock (iterating the new BDSes, too). */
     for (i = 0; i < num_bs; i++) {
-        bmds = bmds_bs[i].bmds;
-        bs = bmds_bs[i].bs;
+        BlkMigDevState *bmds = bmds_bs[i].bmds;
+        BlockDriverState *bs = bmds_bs[i].bs;
 
         if (bmds) {
             ret = blk_insert_bs(bmds->blk, bs, &local_err);
@@ -680,18 +676,13 @@ static int64_t get_remaining_dirty(void)
 static void block_migration_cleanup_bmds(void)
 {
     BlkMigDevState *bmds;
-    BlockDriverState *bs;
     AioContext *ctx;
 
     unset_dirty_tracking();
 
     while ((bmds = QSIMPLEQ_FIRST(&block_mig_state.bmds_list)) != NULL) {
         QSIMPLEQ_REMOVE_HEAD(&block_mig_state.bmds_list, entry);
-
-        bs = blk_bs(bmds->blk);
-        if (bs) {
-            bdrv_op_unblock_all(bs, bmds->blocker);
-        }
+        bdrv_op_unblock_all(blk_bs(bmds->blk), bmds->blocker);
         error_free(bmds->blocker);
 
         /* Save ctx, because bmds->blk can disappear during blk_unref.  */
@@ -731,13 +722,18 @@ static int block_save_setup(QEMUFile *f, void *opaque)
     trace_migration_block_save("setup", block_mig_state.submitted,
                                block_mig_state.transferred);
 
+    qemu_mutex_lock_iothread();
     ret = init_blk_migration(f);
     if (ret < 0) {
+        qemu_mutex_unlock_iothread();
         return ret;
     }
 
     /* start track dirty blocks */
     ret = set_dirty_tracking();
+
+    qemu_mutex_unlock_iothread();
+
     if (ret) {
         return ret;
     }
@@ -752,7 +748,7 @@ static int block_save_setup(QEMUFile *f, void *opaque)
 static int block_save_iterate(QEMUFile *f, void *opaque)
 {
     int ret;
-    uint64_t last_bytes = qemu_file_transferred_noflush(f);
+    uint64_t last_bytes = qemu_file_transferred(f);
 
     trace_migration_block_save("iterate", block_mig_state.submitted,
                                block_mig_state.transferred);
@@ -804,7 +800,7 @@ static int block_save_iterate(QEMUFile *f, void *opaque)
     }
 
     qemu_put_be64(f, BLK_MIG_FLAG_EOS);
-    uint64_t delta_bytes = qemu_file_transferred_noflush(f) - last_bytes;
+    uint64_t delta_bytes = qemu_file_transferred(f) - last_bytes;
     return (delta_bytes > 0);
 }
 

@@ -41,11 +41,9 @@ typedef struct VMStateField VMStateField;
  */
 struct VMStateInfo {
     const char *name;
-    int coroutine_mixed_fn (*get)(QEMUFile *f, void *pv, size_t size,
-                                  const VMStateField *field);
-    int coroutine_mixed_fn (*put)(QEMUFile *f, void *pv, size_t size,
-                                  const VMStateField *field,
-                                  JSONWriter *vmdesc);
+    int (*get)(QEMUFile *f, void *pv, size_t size, const VMStateField *field);
+    int (*put)(QEMUFile *f, void *pv, size_t size, const VMStateField *field,
+               JSONWriter *vmdesc);
 };
 
 enum VMStateFlags {
@@ -1196,11 +1194,9 @@ int vmstate_load_state(QEMUFile *f, const VMStateDescription *vmsd,
                        void *opaque, int version_id);
 int vmstate_save_state(QEMUFile *f, const VMStateDescription *vmsd,
                        void *opaque, JSONWriter *vmdesc);
-int vmstate_save_state_with_err(QEMUFile *f, const VMStateDescription *vmsd,
-                       void *opaque, JSONWriter *vmdesc, Error **errp);
 int vmstate_save_state_v(QEMUFile *f, const VMStateDescription *vmsd,
                          void *opaque, JSONWriter *vmdesc,
-                         int version_id, Error **errp);
+                         int version_id);
 
 bool vmstate_save_needed(const VMStateDescription *vmsd, void *opaque);
 

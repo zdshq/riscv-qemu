@@ -894,9 +894,9 @@ You can run the avocado tests simply by executing:
 
   make check-avocado
 
-This involves the automatic installation, from PyPI, of all the
-necessary avocado-framework dependencies into the QEMU venv within the
-build tree (at ``./pyvenv``). Test results are also saved within the
+This involves the automatic creation of Python virtual environment
+within the build tree (at ``tests/venv``) which will have all the
+right dependencies, and will save tests results also within the
 build tree (at ``tests/results``).
 
 Note: the build environment must be using a Python 3 stack, and have
@@ -953,7 +953,7 @@ may be invoked by running:
 
  .. code::
 
-  pyvenv/bin/avocado run $OPTION1 $OPTION2 tests/avocado/
+  tests/venv/bin/avocado run $OPTION1 $OPTION2 tests/avocado/
 
 Note that if ``make check-avocado`` was not executed before, it is
 possible to create the Python virtual environment with the dependencies
@@ -968,20 +968,20 @@ a test file. To run tests from a single file within the build tree, use:
 
  .. code::
 
-  pyvenv/bin/avocado run tests/avocado/$TESTFILE
+  tests/venv/bin/avocado run tests/avocado/$TESTFILE
 
 To run a single test within a test file, use:
 
  .. code::
 
-  pyvenv/bin/avocado run tests/avocado/$TESTFILE:$TESTCLASS.$TESTNAME
+  tests/venv/bin/avocado run tests/avocado/$TESTFILE:$TESTCLASS.$TESTNAME
 
 Valid test names are visible in the output from any previous execution
 of Avocado or ``make check-avocado``, and can also be queried using:
 
  .. code::
 
-  pyvenv/bin/avocado list tests/avocado
+  tests/venv/bin/avocado list tests/avocado
 
 Manual Installation
 ~~~~~~~~~~~~~~~~~~~
@@ -1014,8 +1014,8 @@ class.  Here's a simple usage example:
       """
       def test_qmp_human_info_version(self):
           self.vm.launch()
-          res = self.vm.cmd('human-monitor-command',
-                            command_line='info version')
+          res = self.vm.command('human-monitor-command',
+                                command_line='info version')
           self.assertRegexpMatches(res, r'^(\d+\.\d+\.\d)')
 
 To execute your test, run:
@@ -1065,15 +1065,15 @@ and hypothetical example follows:
           first_machine.launch()
           second_machine.launch()
 
-          first_res = first_machine.cmd(
+          first_res = first_machine.command(
               'human-monitor-command',
               command_line='info version')
 
-          second_res = second_machine.cmd(
+          second_res = second_machine.command(
               'human-monitor-command',
               command_line='info version')
 
-          third_res = self.get_vm(name='third_machine').cmd(
+          third_res = self.get_vm(name='third_machine').command(
               'human-monitor-command',
               command_line='info version')
 
@@ -1458,7 +1458,7 @@ TCG test dependencies
 ~~~~~~~~~~~~~~~~~~~~~
 
 The TCG tests are deliberately very light on dependencies and are
-either totally bare with minimal gcc lib support (for system-mode tests)
+either totally bare with minimal gcc lib support (for softmmu tests)
 or just glibc (for linux-user tests). This is because getting a cross
 compiler to work with additional libraries can be challenging.
 

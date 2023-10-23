@@ -24,7 +24,16 @@ static bool trans_ecall(DisasContext *ctx, arg_ecall *a)
     generate_exception(ctx, RISCV_EXCP_U_ECALL);
     return true;
 }
-
+#include "include/sysemu/runstate.h"
+extern ShutdownAction shutdown_action;
+static bool trans_trap(DisasContext *ctx, arg_trap *a)
+{
+    if(!ctx->cs->env_ptr->gpr[10]){
+        // shutdown_action = SHUTDOWN_ACTION_POWEROFF;
+        // qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+    }    
+    return true;
+}
 static bool trans_ebreak(DisasContext *ctx, arg_ebreak *a)
 {
     target_ulong    ebreak_addr = ctx->base.pc_next;
@@ -78,7 +87,7 @@ static bool trans_sret(DisasContext *ctx, arg_sret *a)
     if (has_ext(ctx, RVS)) {
         decode_save_opc(ctx);
         translator_io_start(&ctx->base);
-        gen_helper_sret(cpu_pc, tcg_env);
+        gen_helper_sret(cpu_pc, cpu_env);
         exit_tb(ctx); /* no chaining */
         ctx->base.is_jmp = DISAS_NORETURN;
     } else {
@@ -95,7 +104,7 @@ static bool trans_mret(DisasContext *ctx, arg_mret *a)
 #ifndef CONFIG_USER_ONLY
     decode_save_opc(ctx);
     translator_io_start(&ctx->base);
-    gen_helper_mret(cpu_pc, tcg_env);
+    gen_helper_mret(cpu_pc, cpu_env);
     exit_tb(ctx); /* no chaining */
     ctx->base.is_jmp = DISAS_NORETURN;
     return true;
@@ -109,7 +118,7 @@ static bool trans_wfi(DisasContext *ctx, arg_wfi *a)
 #ifndef CONFIG_USER_ONLY
     decode_save_opc(ctx);
     gen_update_pc(ctx, ctx->cur_insn_len);
-    gen_helper_wfi(tcg_env);
+    gen_helper_wfi(cpu_env);
     return true;
 #else
     return false;
@@ -120,7 +129,7 @@ static bool trans_sfence_vma(DisasContext *ctx, arg_sfence_vma *a)
 {
 #ifndef CONFIG_USER_ONLY
     decode_save_opc(ctx);
-    gen_helper_tlb_flush(tcg_env);
+    gen_helper_tlb_flush(cpu_env);
     return true;
 #endif
     return false;

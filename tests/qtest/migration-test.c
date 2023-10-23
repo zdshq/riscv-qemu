@@ -66,14 +66,6 @@ static bool got_dst_resume;
  */
 #define DIRTYLIMIT_TOLERANCE_RANGE  25  /* MB/s */
 
-#define ANALYZE_SCRIPT "scripts/analyze-migration.py"
-
-#define QEMU_VM_FILE_MAGIC 0x5145564d
-#define FILE_TEST_FILENAME "migfile"
-#define FILE_TEST_OFFSET 0x1000
-#define QEMU_ENV_SRC "QTEST_QEMU_BINARY_SRC"
-#define QEMU_ENV_DST "QTEST_QEMU_BINARY_DST"
-
 #if defined(__linux__)
 #include <sys/syscall.h>
 #include <sys/vfs.h>
@@ -124,7 +116,6 @@ static bool ufd_version_check(void)
 #endif
 
 static char *tmpfs;
-static char *bootpath;
 
 /* The boot file modifies memory area in [start_address, end_address)
  * repeatedly. It outputs a 'B' at a fixed rate while it's still running.
@@ -133,45 +124,12 @@ static char *bootpath;
 #include "tests/migration/aarch64/a-b-kernel.h"
 #include "tests/migration/s390x/a-b-bios.h"
 
-static void bootfile_create(char *dir)
+static void init_bootfile(const char *bootpath, void *content, size_t len)
 {
-    const char *arch = qtest_get_arch();
-    unsigned char *content;
-    size_t len;
-
-    bootpath = g_strdup_printf("%s/bootsect", dir);
-    if (strcmp(arch, "i386") == 0 || strcmp(arch, "x86_64") == 0) {
-        /* the assembled x86 boot sector should be exactly one sector large */
-        g_assert(sizeof(x86_bootsect) == 512);
-        content = x86_bootsect;
-        len = sizeof(x86_bootsect);
-    } else if (g_str_equal(arch, "s390x")) {
-        content = s390x_elf;
-        len = sizeof(s390x_elf);
-    } else if (strcmp(arch, "ppc64") == 0) {
-        /*
-         * sane architectures can be programmed at the boot prompt
-         */
-        return;
-    } else if (strcmp(arch, "aarch64") == 0) {
-        content = aarch64_kernel;
-        len = sizeof(aarch64_kernel);
-        g_assert(sizeof(aarch64_kernel) <= ARM_TEST_MAX_KERNEL_SIZE);
-    } else {
-        g_assert_not_reached();
-    }
-
     FILE *bootfile = fopen(bootpath, "wb");
 
     g_assert_cmpint(fwrite(content, len, 1, bootfile), ==, 1);
     fclose(bootfile);
-}
-
-static void bootfile_delete(void)
-{
-    unlink(bootpath);
-    g_free(bootpath);
-    bootpath = NULL;
 }
 
 /*
@@ -528,7 +486,7 @@ static void migrate_ensure_converge(QTestState *who)
  * transferred.
  *
  * Finally we go back to the source and read a byte just
- * before the marker until we see it flip in value. This
+ * before the marker untill we see it flip in value. This
  * is proof that start_address -> MAGIC_OFFSET_BASE
  * is now dirty again.
  *
@@ -611,6 +569,17 @@ static void migrate_recover(QTestState *who, const char *uri)
 static void migrate_cancel(QTestState *who)
 {
     qtest_qmp_assert_success(who, "{ 'execute': 'migrate_cancel' }");
+}
+
+static void migrate_set_capability(QTestState *who, const char *capability,
+                                   bool value)
+{
+    qtest_qmp_assert_success(who,
+                             "{ 'execute': 'migrate-set-capabilities',"
+                             "'arguments': { "
+                             "'capabilities': [ { "
+                             "'capability': %s, 'state': %i } ] } }",
+                             capability, value);
 }
 
 static void migrate_postcopy_start(QTestState *from, QTestState *to)
@@ -705,8 +674,6 @@ typedef struct {
         MIG_TEST_FAIL,
         /* This test should fail, dest qemu should fail with abnormal status */
         MIG_TEST_FAIL_DEST_QUIT_ERR,
-        /* The QMP command for this migration should fail with an error */
-        MIG_TEST_QMP_ERROR,
     } result;
 
     /*
@@ -740,13 +707,11 @@ static int test_migrate_start(QTestState **from, QTestState **to,
     g_autofree gchar *cmd_source = NULL;
     g_autofree gchar *cmd_target = NULL;
     const gchar *ignore_stderr;
+    g_autofree char *bootpath = NULL;
     g_autofree char *shmem_opts = NULL;
     g_autofree char *shmem_path = NULL;
-    const char *kvm_opts = NULL;
     const char *arch = qtest_get_arch();
     const char *memory_size;
-    const char *machine_alias, *machine_opts = "";
-    g_autofree char *machine = NULL;
 
     if (args->use_shmem) {
         if (!g_file_test("/dev/shm", G_FILE_TEST_IS_DIR)) {
@@ -757,22 +722,18 @@ static int test_migrate_start(QTestState **from, QTestState **to,
 
     got_src_stop = false;
     got_dst_resume = false;
+    bootpath = g_strdup_printf("%s/bootsect", tmpfs);
     if (strcmp(arch, "i386") == 0 || strcmp(arch, "x86_64") == 0) {
+        /* the assembled x86 boot sector should be exactly one sector large */
+        assert(sizeof(x86_bootsect) == 512);
+        init_bootfile(bootpath, x86_bootsect, sizeof(x86_bootsect));
         memory_size = "150M";
-
-        if (g_str_equal(arch, "i386")) {
-            machine_alias = "pc";
-        } else {
-            machine_alias = "q35";
-        }
-        arch_opts = g_strdup_printf(
-            "-drive if=none,id=d0,file=%s,format=raw "
-            "-device ide-hd,drive=d0,secs=1,cyls=1,heads=1", bootpath);
+        arch_opts = g_strdup_printf("-drive file=%s,format=raw", bootpath);
         start_address = X86_TEST_MEM_START;
         end_address = X86_TEST_MEM_END;
     } else if (g_str_equal(arch, "s390x")) {
+        init_bootfile(bootpath, s390x_elf, sizeof(s390x_elf));
         memory_size = "128M";
-        machine_alias = "s390-ccw-virtio";
         arch_opts = g_strdup_printf("-bios %s", bootpath);
         start_address = S390_TEST_MEM_START;
         end_address = S390_TEST_MEM_END;
@@ -784,16 +745,16 @@ static int test_migrate_start(QTestState **from, QTestState **to,
                                       "'nvramrc=hex .\" _\" begin %x %x "
                                       "do i c@ 1 + i c! 1000 +loop .\" B\" 0 "
                                       "until'", end_address, start_address);
-        machine_alias = "pseries";
-        machine_opts = "vsmt=8";
-        arch_opts = g_strdup("-nodefaults");
+        arch_opts = g_strdup("-nodefaults -machine vsmt=8");
     } else if (strcmp(arch, "aarch64") == 0) {
+        init_bootfile(bootpath, aarch64_kernel, sizeof(aarch64_kernel));
         memory_size = "150M";
-        machine_alias = "virt";
-        machine_opts = "gic-version=max";
-        arch_opts = g_strdup_printf("-cpu max -kernel %s", bootpath);
+        arch_opts = g_strdup_printf("-machine virt,gic-version=max -cpu max "
+                                    "-kernel %s", bootpath);
         start_address = ARM_TEST_MEM_START;
         end_address = ARM_TEST_MEM_END;
+
+        g_assert(sizeof(aarch64_kernel) <= ARM_TEST_MAX_KERNEL_SIZE);
     } else {
         g_assert_not_reached();
     }
@@ -819,61 +780,53 @@ static int test_migrate_start(QTestState **from, QTestState **to,
             "-object memory-backend-file,id=mem0,size=%s"
             ",mem-path=%s,share=on -numa node,memdev=mem0",
             memory_size, shmem_path);
+    } else {
+        shmem_path = NULL;
+        shmem_opts = g_strdup("");
     }
-
-    if (args->use_dirty_ring) {
-        kvm_opts = ",dirty-ring-size=4096";
-    }
-
-    machine = resolve_machine_version(machine_alias, QEMU_ENV_SRC,
-                                      QEMU_ENV_DST);
-
-    g_test_message("Using machine type: %s", machine);
 
     cmd_source = g_strdup_printf("-accel kvm%s -accel tcg "
-                                 "-machine %s,%s "
                                  "-name source,debug-threads=on "
                                  "-m %s "
                                  "-serial file:%s/src_serial "
                                  "%s %s %s %s %s",
-                                 kvm_opts ? kvm_opts : "",
-                                 machine, machine_opts,
+                                 args->use_dirty_ring ?
+                                 ",dirty-ring-size=4096" : "",
                                  memory_size, tmpfs,
                                  arch_opts ? arch_opts : "",
                                  arch_source ? arch_source : "",
-                                 shmem_opts ? shmem_opts : "",
+                                 shmem_opts,
                                  args->opts_source ? args->opts_source : "",
                                  ignore_stderr);
     if (!args->only_target) {
-        *from = qtest_init_with_env(QEMU_ENV_SRC, cmd_source);
+        *from = qtest_init(cmd_source);
         qtest_qmp_set_event_callback(*from,
                                      migrate_watch_for_stop,
                                      &got_src_stop);
     }
 
     cmd_target = g_strdup_printf("-accel kvm%s -accel tcg "
-                                 "-machine %s,%s "
                                  "-name target,debug-threads=on "
                                  "-m %s "
                                  "-serial file:%s/dest_serial "
                                  "-incoming %s "
                                  "%s %s %s %s %s",
-                                 kvm_opts ? kvm_opts : "",
-                                 machine, machine_opts,
+                                 args->use_dirty_ring ?
+                                 ",dirty-ring-size=4096" : "",
                                  memory_size, tmpfs, uri,
                                  arch_opts ? arch_opts : "",
                                  arch_target ? arch_target : "",
-                                 shmem_opts ? shmem_opts : "",
+                                 shmem_opts,
                                  args->opts_target ? args->opts_target : "",
                                  ignore_stderr);
-    *to = qtest_init_with_env(QEMU_ENV_DST, cmd_target);
+    *to = qtest_init(cmd_target);
     qtest_qmp_set_event_callback(*to,
                                  migrate_watch_for_resume,
                                  &got_dst_resume);
 
     /*
      * Remove shmem file immediately to avoid memory leak in test failed case.
-     * It's valid because QEMU has already opened this file
+     * It's valid becase QEMU has already opened this file
      */
     if (args->use_shmem) {
         unlink(shmem_path);
@@ -910,10 +863,10 @@ static void test_migrate_end(QTestState *from, QTestState *to, bool test_dest)
 
     qtest_quit(to);
 
+    cleanup("bootsect");
     cleanup("migsocket");
     cleanup("src_serial");
     cleanup("dest_serial");
-    cleanup(FILE_TEST_FILENAME);
 }
 
 #ifdef CONFIG_GNUTLS
@@ -1533,66 +1486,10 @@ static void test_baddest(void)
     test_migrate_end(from, to, false);
 }
 
-#ifndef _WIN32
-static void test_analyze_script(void)
-{
-    MigrateStart args = {
-        .opts_source = "-uuid 11111111-1111-1111-1111-111111111111",
-    };
-    QTestState *from, *to;
-    g_autofree char *uri = NULL;
-    g_autofree char *file = NULL;
-    int pid, wstatus;
-    const char *python = g_getenv("PYTHON");
-
-    if (!python) {
-        g_test_skip("PYTHON variable not set");
-        return;
-    }
-
-    /* dummy url */
-    if (test_migrate_start(&from, &to, "tcp:127.0.0.1:0", &args)) {
-        return;
-    }
-
-    /*
-     * Setting these two capabilities causes the "configuration"
-     * vmstate to include subsections for them. The script needs to
-     * parse those subsections properly.
-     */
-    migrate_set_capability(from, "validate-uuid", true);
-    migrate_set_capability(from, "x-ignore-shared", true);
-
-    file = g_strdup_printf("%s/migfile", tmpfs);
-    uri = g_strdup_printf("exec:cat > %s", file);
-
-    migrate_ensure_converge(from);
-    migrate_qmp(from, uri, "{}");
-    wait_for_migration_complete(from);
-
-    pid = fork();
-    if (!pid) {
-        close(1);
-        open("/dev/null", O_WRONLY);
-        execl(python, python, ANALYZE_SCRIPT, "-f", file, NULL);
-        g_assert_not_reached();
-    }
-
-    g_assert(waitpid(pid, &wstatus, 0) == pid);
-    if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) != 0) {
-        g_test_message("Failed to analyze the migration stream");
-        g_test_fail();
-    }
-    test_migrate_end(from, to, false);
-    cleanup("migfile");
-}
-#endif
-
 static void test_precopy_common(MigrateCommon *args)
 {
     QTestState *from, *to;
     void *data_hook = NULL;
-    g_autofree char *connect_uri = NULL;
 
     if (test_migrate_start(&from, &to, args->listen_uri, &args->start)) {
         return;
@@ -1627,17 +1524,13 @@ static void test_precopy_common(MigrateCommon *args)
     }
 
     if (!args->connect_uri) {
-        connect_uri = migrate_get_socket_address(to, "socket-address");
+        g_autofree char *local_connect_uri =
+            migrate_get_socket_address(to, "socket-address");
+        migrate_qmp(from, local_connect_uri, "{}");
     } else {
-        connect_uri = g_strdup(args->connect_uri);
+        migrate_qmp(from, args->connect_uri, "{}");
     }
 
-    if (args->result == MIG_TEST_QMP_ERROR) {
-        migrate_qmp_fail(from, connect_uri, "{}");
-        goto finish;
-    }
-
-    migrate_qmp(from, connect_uri, "{}");
 
     if (args->result != MIG_TEST_SUCCEED) {
         bool allow_active = args->result == MIG_TEST_FAIL;
@@ -1689,71 +1582,6 @@ static void test_precopy_common(MigrateCommon *args)
         wait_for_serial("dest_serial");
     }
 
-finish:
-    if (args->finish_hook) {
-        args->finish_hook(from, to, data_hook);
-    }
-
-    test_migrate_end(from, to, args->result == MIG_TEST_SUCCEED);
-}
-
-static void test_file_common(MigrateCommon *args, bool stop_src)
-{
-    QTestState *from, *to;
-    void *data_hook = NULL;
-    g_autofree char *connect_uri = g_strdup(args->connect_uri);
-
-    if (test_migrate_start(&from, &to, args->listen_uri, &args->start)) {
-        return;
-    }
-
-    /*
-     * File migration is never live. We can keep the source VM running
-     * during migration, but the destination will not be running
-     * concurrently.
-     */
-    g_assert_false(args->live);
-
-    if (args->start_hook) {
-        data_hook = args->start_hook(from, to);
-    }
-
-    migrate_ensure_converge(from);
-    wait_for_serial("src_serial");
-
-    if (stop_src) {
-        qtest_qmp_assert_success(from, "{ 'execute' : 'stop'}");
-        if (!got_src_stop) {
-            qtest_qmp_eventwait(from, "STOP");
-        }
-    }
-
-    if (args->result == MIG_TEST_QMP_ERROR) {
-        migrate_qmp_fail(from, connect_uri, "{}");
-        goto finish;
-    }
-
-    migrate_qmp(from, connect_uri, "{}");
-    wait_for_migration_complete(from);
-
-    /*
-     * We need to wait for the source to finish before starting the
-     * destination.
-     */
-    migrate_incoming_qmp(to, connect_uri, "{}");
-    wait_for_migration_complete(to);
-
-    if (stop_src) {
-        qtest_qmp_assert_success(to, "{ 'execute' : 'cont'}");
-    }
-
-    if (!got_dst_resume) {
-        qtest_qmp_eventwait(to, "RESUME");
-    }
-
-    wait_for_serial("dest_serial");
-
-finish:
     if (args->finish_hook) {
         args->finish_hook(from, to, data_hook);
     }
@@ -1956,76 +1784,6 @@ static void test_precopy_unix_compress_nowait(void)
     test_precopy_common(&args);
 }
 
-static void test_precopy_file(void)
-{
-    g_autofree char *uri = g_strdup_printf("file:%s/%s", tmpfs,
-                                           FILE_TEST_FILENAME);
-    MigrateCommon args = {
-        .connect_uri = uri,
-        .listen_uri = "defer",
-    };
-
-    test_file_common(&args, true);
-}
-
-static void file_offset_finish_hook(QTestState *from, QTestState *to,
-                                    void *opaque)
-{
-#if defined(__linux__)
-    g_autofree char *path = g_strdup_printf("%s/%s", tmpfs, FILE_TEST_FILENAME);
-    size_t size = FILE_TEST_OFFSET + sizeof(QEMU_VM_FILE_MAGIC);
-    uintptr_t *addr, *p;
-    int fd;
-
-    fd = open(path, O_RDONLY);
-    g_assert(fd != -1);
-    addr = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
-    g_assert(addr != MAP_FAILED);
-
-    /*
-     * Ensure the skipped offset contains zeros and the migration
-     * stream starts at the right place.
-     */
-    p = addr;
-    while (p < addr + FILE_TEST_OFFSET / sizeof(uintptr_t)) {
-        g_assert(*p == 0);
-        p++;
-    }
-    g_assert_cmpint(cpu_to_be64(*p) >> 32, ==, QEMU_VM_FILE_MAGIC);
-
-    munmap(addr, size);
-    close(fd);
-#endif
-}
-
-static void test_precopy_file_offset(void)
-{
-    g_autofree char *uri = g_strdup_printf("file:%s/%s,offset=%d", tmpfs,
-                                           FILE_TEST_FILENAME,
-                                           FILE_TEST_OFFSET);
-    MigrateCommon args = {
-        .connect_uri = uri,
-        .listen_uri = "defer",
-        .finish_hook = file_offset_finish_hook,
-    };
-
-    test_file_common(&args, false);
-}
-
-static void test_precopy_file_offset_bad(void)
-{
-    /* using a value not supported by qemu_strtosz() */
-    g_autofree char *uri = g_strdup_printf("file:%s/%s,offset=0x20M",
-                                           tmpfs, FILE_TEST_FILENAME);
-    MigrateCommon args = {
-        .connect_uri = uri,
-        .listen_uri = "defer",
-        .result = MIG_TEST_QMP_ERROR,
-    };
-
-    test_file_common(&args, false);
-}
-
 static void test_precopy_tcp_plain(void)
 {
     MigrateCommon args = {
@@ -2199,7 +1957,8 @@ static void *test_migrate_fd_start_hook(QTestState *from,
     close(pair[0]);
 
     /* Start incoming migration from the 1st socket */
-    migrate_incoming_qmp(to, "fd:fd-mig", "{}");
+    qtest_qmp_assert_success(to, "{ 'execute': 'migrate-incoming',"
+                             "  'arguments': { 'uri': 'fd:fd-mig' }}");
 
     /* Send the 2nd socket to the target */
     qtest_qmp_fds_assert_success(from, &pair[1], 1,
@@ -2344,7 +2103,7 @@ static void test_migrate_auto_converge(void)
 
     /*
      * We want the test to be stable and as fast as possible.
-     * E.g., with 1Gb/s bandwidth migration may pass without throttling,
+     * E.g., with 1Gb/s bandwith migration may pass without throttling,
      * so we need to decrease a bandwidth.
      */
     const int64_t init_pct = 5, inc_pct = 25, max_pct = 95;
@@ -2421,7 +2180,8 @@ test_migrate_precopy_tcp_multifd_start_common(QTestState *from,
     migrate_set_capability(to, "multifd", true);
 
     /* Start incoming migration from the 1st socket */
-    migrate_incoming_qmp(to, "tcp:127.0.0.1:0", "{}");
+    qtest_qmp_assert_success(to, "{ 'execute': 'migrate-incoming',"
+                             "  'arguments': { 'uri': 'tcp:127.0.0.1:0' }}");
 
     return NULL;
 }
@@ -2674,7 +2434,8 @@ static void test_multifd_tcp_cancel(void)
     migrate_set_capability(to, "multifd", true);
 
     /* Start incoming migration from the 1st socket */
-    migrate_incoming_qmp(to, "tcp:127.0.0.1:0", "{}");
+    qtest_qmp_assert_success(to, "{ 'execute': 'migrate-incoming',"
+                             "  'arguments': { 'uri': 'tcp:127.0.0.1:0' }}");
 
     /* Wait for the first serial output from the source */
     wait_for_serial("src_serial");
@@ -2704,7 +2465,8 @@ static void test_multifd_tcp_cancel(void)
     migrate_set_capability(to2, "multifd", true);
 
     /* Start incoming migration from the 1st socket */
-    migrate_incoming_qmp(to2, "tcp:127.0.0.1:0", "{}");
+    qtest_qmp_assert_success(to2, "{ 'execute': 'migrate-incoming',"
+                             "  'arguments': { 'uri': 'tcp:127.0.0.1:0' }}");
 
     g_free(uri);
     uri = migrate_get_socket_address(to2, "socket-address");
@@ -2862,7 +2624,15 @@ static int64_t get_limit_rate(QTestState *who)
 static QTestState *dirtylimit_start_vm(void)
 {
     QTestState *vm = NULL;
-    g_autofree gchar *
+    g_autofree gchar *cmd = NULL;
+    const char *arch = qtest_get_arch();
+    g_autofree char *bootpath = NULL;
+
+    assert((strcmp(arch, "x86_64") == 0));
+    bootpath = g_strdup_printf("%s/bootsect", tmpfs);
+    assert(sizeof(x86_bootsect) == 512);
+    init_bootfile(bootpath, x86_bootsect, sizeof(x86_bootsect));
+
     cmd = g_strdup_printf("-accel kvm,dirty-ring-size=4096 "
                           "-name dirtylimit-test,debug-threads=on "
                           "-m 150M -smp 1 "
@@ -2877,6 +2647,7 @@ static QTestState *dirtylimit_start_vm(void)
 static void dirtylimit_stop_vm(QTestState *vm)
 {
     qtest_quit(vm);
+    cleanup("bootsect");
     cleanup("vm_serial");
 }
 
@@ -2997,22 +2768,9 @@ int main(int argc, char **argv)
     bool has_uffd;
     const char *arch;
     g_autoptr(GError) err = NULL;
-    const char *qemu_src = getenv(QEMU_ENV_SRC);
-    const char *qemu_dst = getenv(QEMU_ENV_DST);
     int ret;
 
     g_test_init(&argc, &argv, NULL);
-
-    /*
-     * The default QTEST_QEMU_BINARY must always be provided because
-     * that is what helpers use to query the accel type and
-     * architecture.
-     */
-    if (qemu_src && qemu_dst) {
-        g_test_message("Only one of %s, %s is allowed",
-                       QEMU_ENV_SRC, QEMU_ENV_DST);
-        exit(1);
-    }
 
     has_kvm = qtest_has_accel("kvm");
     has_tcg = qtest_has_accel("tcg");
@@ -3051,7 +2809,6 @@ int main(int argc, char **argv)
                        g_get_tmp_dir(), err->message);
     }
     g_assert(tmpfs);
-    bootfile_create(tmpfs);
 
     module_call_init(MODULE_INIT_QOM);
 
@@ -3071,11 +2828,6 @@ int main(int argc, char **argv)
     }
 
     qtest_add_func("/migration/bad_dest", test_baddest);
-#ifndef _WIN32
-    if (!g_str_equal(arch, "s390x")) {
-        qtest_add_func("/migration/analyze-script", test_analyze_script);
-    }
-#endif
     qtest_add_func("/migration/precopy/unix/plain", test_precopy_unix_plain);
     qtest_add_func("/migration/precopy/unix/xbzrle", test_precopy_unix_xbzrle);
     /*
@@ -3088,14 +2840,6 @@ int main(int argc, char **argv)
         qtest_add_func("/migration/precopy/unix/compress/nowait",
                        test_precopy_unix_compress_nowait);
     }
-
-    qtest_add_func("/migration/precopy/file",
-                   test_precopy_file);
-    qtest_add_func("/migration/precopy/file/offset",
-                   test_precopy_file_offset);
-    qtest_add_func("/migration/precopy/file/offset/bad",
-                   test_precopy_file_offset_bad);
-
 #ifdef CONFIG_GNUTLS
     qtest_add_func("/migration/precopy/unix/tls/psk",
                    test_precopy_unix_tls_psk);
@@ -3212,7 +2956,6 @@ int main(int argc, char **argv)
 
     g_assert_cmpint(ret, ==, 0);
 
-    bootfile_delete();
     ret = rmdir(tmpfs);
     if (ret != 0) {
         g_test_message("unable to rmdir: path (%s): %s",

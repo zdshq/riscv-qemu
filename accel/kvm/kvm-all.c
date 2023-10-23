@@ -174,29 +174,11 @@ void kvm_resample_fd_notify(int gsi)
     }
 }
 
-unsigned int kvm_get_max_memslots(void)
+int kvm_get_max_memslots(void)
 {
     KVMState *s = KVM_STATE(current_accel());
 
     return s->nr_slots;
-}
-
-unsigned int kvm_get_free_memslots(void)
-{
-    unsigned int used_slots = 0;
-    KVMState *s = kvm_state;
-    int i;
-
-    kvm_slots_lock();
-    for (i = 0; i < s->nr_as; i++) {
-        if (!s->as[i].ml) {
-            continue;
-        }
-        used_slots = MAX(used_slots, s->as[i].ml->nr_used_slots);
-    }
-    kvm_slots_unlock();
-
-    return s->nr_slots - used_slots;
 }
 
 /* Called with KVMMemoryListener.slots_lock held */
@@ -212,6 +194,19 @@ static KVMSlot *kvm_get_free_slot(KVMMemoryListener *kml)
     }
 
     return NULL;
+}
+
+bool kvm_has_free_slot(MachineState *ms)
+{
+    KVMState *s = KVM_STATE(ms->accelerator);
+    bool result;
+    KVMMemoryListener *kml = &s->memory_listener;
+
+    kvm_slots_lock();
+    result = !!kvm_get_free_slot(kml);
+    kvm_slots_unlock();
+
+    return result;
 }
 
 /* Called with KVMMemoryListener.slots_lock held */
@@ -1392,7 +1387,6 @@ static void kvm_set_phys_mem(KVMMemoryListener *kml,
             }
             start_addr += slot_size;
             size -= slot_size;
-            kml->nr_used_slots--;
         } while (size);
         return;
     }
@@ -1418,7 +1412,6 @@ static void kvm_set_phys_mem(KVMMemoryListener *kml,
         ram_start_offset += slot_size;
         ram += slot_size;
         size -= slot_size;
-        kml->nr_used_slots++;
     } while (size);
 }
 
@@ -1461,13 +1454,15 @@ static void *kvm_dirty_ring_reaper_thread(void *data)
     return NULL;
 }
 
-static void kvm_dirty_ring_reaper_init(KVMState *s)
+static int kvm_dirty_ring_reaper_init(KVMState *s)
 {
     struct KVMDirtyRingReaper *r = &s->reaper;
 
     qemu_thread_create(&r->reaper_thr, "kvm-reaper",
                        kvm_dirty_ring_reaper_thread,
                        s, QEMU_THREAD_JOINABLE);
+
+    return 0;
 }
 
 static int kvm_dirty_ring_init(KVMState *s)
@@ -2463,7 +2458,7 @@ static int kvm_init(MachineState *ms)
     KVMState *s;
     const KVMCapabilityInfo *missing_cap;
     int ret;
-    int type;
+    int type = 0;
     uint64_t dirty_log_manual_caps;
 
     qemu_mutex_init(&kml_slots_lock);
@@ -2528,13 +2523,6 @@ static int kvm_init(MachineState *ms)
         type = mc->kvm_type(ms, kvm_type);
     } else if (mc->kvm_type) {
         type = mc->kvm_type(ms, NULL);
-    } else {
-        type = kvm_arch_get_default_type(ms);
-    }
-
-    if (type < 0) {
-        ret = -EINVAL;
-        goto err;
     }
 
     do {
@@ -2749,7 +2737,10 @@ static int kvm_init(MachineState *ms)
     }
 
     if (s->kvm_dirty_ring_size) {
-        kvm_dirty_ring_reaper_init(s);
+        ret = kvm_dirty_ring_reaper_init(s);
+        if (ret) {
+            goto err;
+        }
     }
 
     if (kvm_check_extension(kvm_state, KVM_CAP_BINARY_STATS_FD)) {
@@ -2767,7 +2758,6 @@ err:
     if (s->fd != -1) {
         close(s->fd);
     }
-    g_free(s->as);
     g_free(s->memory_listener.slots);
 
     return ret;
@@ -2858,13 +2848,7 @@ bool kvm_cpu_check_are_resettable(void)
 static void do_kvm_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 {
     if (!cpu->vcpu_dirty) {
-        int ret = kvm_arch_get_registers(cpu);
-        if (ret) {
-            error_report("Failed to get registers: %s", strerror(-ret));
-            cpu_dump_state(cpu, stderr, CPU_DUMP_CODE);
-            vm_stop(RUN_STATE_INTERNAL_ERROR);
-        }
-
+        kvm_arch_get_registers(cpu);
         cpu->vcpu_dirty = true;
     }
 }
@@ -2878,13 +2862,7 @@ void kvm_cpu_synchronize_state(CPUState *cpu)
 
 static void do_kvm_cpu_synchronize_post_reset(CPUState *cpu, run_on_cpu_data arg)
 {
-    int ret = kvm_arch_put_registers(cpu, KVM_PUT_RESET_STATE);
-    if (ret) {
-        error_report("Failed to put registers after reset: %s", strerror(-ret));
-        cpu_dump_state(cpu, stderr, CPU_DUMP_CODE);
-        vm_stop(RUN_STATE_INTERNAL_ERROR);
-    }
-
+    kvm_arch_put_registers(cpu, KVM_PUT_RESET_STATE);
     cpu->vcpu_dirty = false;
 }
 
@@ -2895,12 +2873,7 @@ void kvm_cpu_synchronize_post_reset(CPUState *cpu)
 
 static void do_kvm_cpu_synchronize_post_init(CPUState *cpu, run_on_cpu_data arg)
 {
-    int ret = kvm_arch_put_registers(cpu, KVM_PUT_FULL_STATE);
-    if (ret) {
-        error_report("Failed to put registers after init: %s", strerror(-ret));
-        exit(1);
-    }
-
+    kvm_arch_put_registers(cpu, KVM_PUT_FULL_STATE);
     cpu->vcpu_dirty = false;
 }
 
@@ -2993,14 +2966,7 @@ int kvm_cpu_exec(CPUState *cpu)
         MemTxAttrs attrs;
 
         if (cpu->vcpu_dirty) {
-            ret = kvm_arch_put_registers(cpu, KVM_PUT_RUNTIME_STATE);
-            if (ret) {
-                error_report("Failed to put registers after init: %s",
-                             strerror(-ret));
-                ret = -1;
-                break;
-            }
-
+            kvm_arch_put_registers(cpu, KVM_PUT_RUNTIME_STATE);
             cpu->vcpu_dirty = false;
         }
 
@@ -3340,7 +3306,8 @@ bool kvm_arm_supports_user_irq(void)
 }
 
 #ifdef KVM_CAP_SET_GUEST_DEBUG
-struct kvm_sw_breakpoint *kvm_find_sw_breakpoint(CPUState *cpu, vaddr pc)
+struct kvm_sw_breakpoint *kvm_find_sw_breakpoint(CPUState *cpu,
+                                                 target_ulong pc)
 {
     struct kvm_sw_breakpoint *bp;
 
@@ -3794,7 +3761,6 @@ static void kvm_accel_instance_init(Object *obj)
     /* KVM dirty ring is by default off */
     s->kvm_dirty_ring_size = 0;
     s->kvm_dirty_ring_with_bitmap = false;
-    s->kvm_eager_split_size = 0;
     s->notify_vmexit = NOTIFY_VMEXIT_OPTION_RUN;
     s->notify_window = 0;
     s->xen_version = 0;

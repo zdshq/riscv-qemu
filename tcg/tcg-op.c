@@ -276,21 +276,6 @@ void tcg_gen_setcondi_i32(TCGCond cond, TCGv_i32 ret,
     tcg_gen_setcond_i32(cond, ret, arg1, tcg_constant_i32(arg2));
 }
 
-void tcg_gen_negsetcond_i32(TCGCond cond, TCGv_i32 ret,
-                            TCGv_i32 arg1, TCGv_i32 arg2)
-{
-    if (cond == TCG_COND_ALWAYS) {
-        tcg_gen_movi_i32(ret, -1);
-    } else if (cond == TCG_COND_NEVER) {
-        tcg_gen_movi_i32(ret, 0);
-    } else if (TCG_TARGET_HAS_negsetcond_i32) {
-        tcg_gen_op4i_i32(INDEX_op_negsetcond_i32, ret, arg1, arg2, cond);
-    } else {
-        tcg_gen_setcond_i32(cond, ret, arg1, arg2);
-        tcg_gen_neg_i32(ret, ret);
-    }
-}
-
 void tcg_gen_muli_i32(TCGv_i32 ret, TCGv_i32 arg1, int32_t arg2)
 {
     if (arg2 == 0) {
@@ -863,7 +848,8 @@ void tcg_gen_movcond_i32(TCGCond cond, TCGv_i32 ret, TCGv_i32 c1,
     } else {
         TCGv_i32 t0 = tcg_temp_ebb_new_i32();
         TCGv_i32 t1 = tcg_temp_ebb_new_i32();
-        tcg_gen_negsetcond_i32(cond, t0, c1, c2);
+        tcg_gen_setcond_i32(cond, t0, c1, c2);
+        tcg_gen_neg_i32(t0, t0);
         tcg_gen_and_i32(t1, v1, t0);
         tcg_gen_andc_i32(ret, v2, t0);
         tcg_gen_or_i32(ret, ret, t1);
@@ -1035,14 +1021,6 @@ void tcg_gen_ext16u_i32(TCGv_i32 ret, TCGv_i32 arg)
     }
 }
 
-/*
- * bswap16_i32: 16-bit byte swap on the low bits of a 32-bit value.
- *
- * Byte pattern: xxab -> yyba
- *
- * With TCG_BSWAP_IZ, x == zero, else undefined.
- * With TCG_BSWAP_OZ, y == zero, with TCG_BSWAP_OS y == sign, else undefined.
- */
 void tcg_gen_bswap16_i32(TCGv_i32 ret, TCGv_i32 arg, int flags)
 {
     /* Only one extension flag may be present. */
@@ -1054,35 +1032,27 @@ void tcg_gen_bswap16_i32(TCGv_i32 ret, TCGv_i32 arg, int flags)
         TCGv_i32 t0 = tcg_temp_ebb_new_i32();
         TCGv_i32 t1 = tcg_temp_ebb_new_i32();
 
-                                            /* arg = ..ab (IZ) xxab (!IZ) */
-        tcg_gen_shri_i32(t0, arg, 8);       /*  t0 = ...a (IZ) .xxa (!IZ) */
+        tcg_gen_shri_i32(t0, arg, 8);
         if (!(flags & TCG_BSWAP_IZ)) {
-            tcg_gen_ext8u_i32(t0, t0);      /*  t0 = ...a */
+            tcg_gen_ext8u_i32(t0, t0);
         }
 
         if (flags & TCG_BSWAP_OS) {
-            tcg_gen_shli_i32(t1, arg, 24);  /*  t1 = b... */
-            tcg_gen_sari_i32(t1, t1, 16);   /*  t1 = ssb. */
+            tcg_gen_shli_i32(t1, arg, 24);
+            tcg_gen_sari_i32(t1, t1, 16);
         } else if (flags & TCG_BSWAP_OZ) {
-            tcg_gen_ext8u_i32(t1, arg);     /*  t1 = ...b */
-            tcg_gen_shli_i32(t1, t1, 8);    /*  t1 = ..b. */
+            tcg_gen_ext8u_i32(t1, arg);
+            tcg_gen_shli_i32(t1, t1, 8);
         } else {
-            tcg_gen_shli_i32(t1, arg, 8);   /*  t1 = xab. */
+            tcg_gen_shli_i32(t1, arg, 8);
         }
 
-        tcg_gen_or_i32(ret, t0, t1);        /* ret = ..ba (OZ) */
-                                            /*     = ssba (OS) */
-                                            /*     = xaba (no flag) */
+        tcg_gen_or_i32(ret, t0, t1);
         tcg_temp_free_i32(t0);
         tcg_temp_free_i32(t1);
     }
 }
 
-/*
- * bswap32_i32: 32-bit byte swap on a 32-bit value.
- *
- * Byte pattern: abcd -> dcba
- */
 void tcg_gen_bswap32_i32(TCGv_i32 ret, TCGv_i32 arg)
 {
     if (TCG_TARGET_HAS_bswap32_i32) {
@@ -1108,11 +1078,6 @@ void tcg_gen_bswap32_i32(TCGv_i32 ret, TCGv_i32 arg)
     }
 }
 
-/*
- * hswap_i32: Swap 16-bit halfwords within a 32-bit value.
- *
- * Byte pattern: abcd -> cdab
- */
 void tcg_gen_hswap_i32(TCGv_i32 ret, TCGv_i32 arg)
 {
     /* Swapping 2 16-bit elements is a rotate. */
@@ -1602,27 +1567,6 @@ void tcg_gen_setcondi_i64(TCGCond cond, TCGv_i64 ret,
     }
 }
 
-void tcg_gen_negsetcond_i64(TCGCond cond, TCGv_i64 ret,
-                            TCGv_i64 arg1, TCGv_i64 arg2)
-{
-    if (cond == TCG_COND_ALWAYS) {
-        tcg_gen_movi_i64(ret, -1);
-    } else if (cond == TCG_COND_NEVER) {
-        tcg_gen_movi_i64(ret, 0);
-    } else if (TCG_TARGET_HAS_negsetcond_i64) {
-        tcg_gen_op4i_i64(INDEX_op_negsetcond_i64, ret, arg1, arg2, cond);
-    } else if (TCG_TARGET_REG_BITS == 32) {
-        tcg_gen_op6i_i32(INDEX_op_setcond2_i32, TCGV_LOW(ret),
-                         TCGV_LOW(arg1), TCGV_HIGH(arg1),
-                         TCGV_LOW(arg2), TCGV_HIGH(arg2), cond);
-        tcg_gen_neg_i32(TCGV_LOW(ret), TCGV_LOW(ret));
-        tcg_gen_mov_i32(TCGV_HIGH(ret), TCGV_LOW(ret));
-    } else {
-        tcg_gen_setcond_i64(cond, ret, arg1, arg2);
-        tcg_gen_neg_i64(ret, ret);
-    }
-}
-
 void tcg_gen_muli_i64(TCGv_i64 ret, TCGv_i64 arg1, int64_t arg2)
 {
     if (arg2 == 0) {
@@ -1777,14 +1721,6 @@ void tcg_gen_ext32u_i64(TCGv_i64 ret, TCGv_i64 arg)
     }
 }
 
-/*
- * bswap16_i64: 16-bit byte swap on the low bits of a 64-bit value.
- *
- * Byte pattern: xxxxxxxxab -> yyyyyyyyba
- *
- * With TCG_BSWAP_IZ, x == zero, else undefined.
- * With TCG_BSWAP_OZ, y == zero, with TCG_BSWAP_OS y == sign, else undefined.
- */
 void tcg_gen_bswap16_i64(TCGv_i64 ret, TCGv_i64 arg, int flags)
 {
     /* Only one extension flag may be present. */
@@ -1803,38 +1739,27 @@ void tcg_gen_bswap16_i64(TCGv_i64 ret, TCGv_i64 arg, int flags)
         TCGv_i64 t0 = tcg_temp_ebb_new_i64();
         TCGv_i64 t1 = tcg_temp_ebb_new_i64();
 
-                                            /* arg = ......ab or xxxxxxab */
-        tcg_gen_shri_i64(t0, arg, 8);       /*  t0 = .......a or .xxxxxxa */
+        tcg_gen_shri_i64(t0, arg, 8);
         if (!(flags & TCG_BSWAP_IZ)) {
-            tcg_gen_ext8u_i64(t0, t0);      /*  t0 = .......a */
+            tcg_gen_ext8u_i64(t0, t0);
         }
 
         if (flags & TCG_BSWAP_OS) {
-            tcg_gen_shli_i64(t1, arg, 56);  /*  t1 = b....... */
-            tcg_gen_sari_i64(t1, t1, 48);   /*  t1 = ssssssb. */
+            tcg_gen_shli_i64(t1, arg, 56);
+            tcg_gen_sari_i64(t1, t1, 48);
         } else if (flags & TCG_BSWAP_OZ) {
-            tcg_gen_ext8u_i64(t1, arg);     /*  t1 = .......b */
-            tcg_gen_shli_i64(t1, t1, 8);    /*  t1 = ......b. */
+            tcg_gen_ext8u_i64(t1, arg);
+            tcg_gen_shli_i64(t1, t1, 8);
         } else {
-            tcg_gen_shli_i64(t1, arg, 8);   /*  t1 = xxxxxab. */
+            tcg_gen_shli_i64(t1, arg, 8);
         }
 
-        tcg_gen_or_i64(ret, t0, t1);        /* ret = ......ba (OZ) */
-                                            /*       ssssssba (OS) */
-                                            /*       xxxxxaba (no flag) */
+        tcg_gen_or_i64(ret, t0, t1);
         tcg_temp_free_i64(t0);
         tcg_temp_free_i64(t1);
     }
 }
 
-/*
- * bswap32_i64: 32-bit byte swap on the low bits of a 64-bit value.
- *
- * Byte pattern: xxxxabcd -> yyyydcba
- *
- * With TCG_BSWAP_IZ, x == zero, else undefined.
- * With TCG_BSWAP_OZ, y == zero, with TCG_BSWAP_OS y == sign, else undefined.
- */
 void tcg_gen_bswap32_i64(TCGv_i64 ret, TCGv_i64 arg, int flags)
 {
     /* Only one extension flag may be present. */
@@ -1868,19 +1793,13 @@ void tcg_gen_bswap32_i64(TCGv_i64 ret, TCGv_i64 arg, int flags)
         } else {
             tcg_gen_shri_i64(t1, t1, 32);   /*  t1 = ....dc.. */
         }
-        tcg_gen_or_i64(ret, t0, t1);        /* ret = ssssdcba (OS) */
-                                            /*       ....dcba (else) */
+        tcg_gen_or_i64(ret, t0, t1);        /* ret = ssssdcba */
 
         tcg_temp_free_i64(t0);
         tcg_temp_free_i64(t1);
     }
 }
 
-/*
- * bswap64_i64: 64-bit byte swap on a 64-bit value.
- *
- * Byte pattern: abcdefgh -> hgfedcba
- */
 void tcg_gen_bswap64_i64(TCGv_i64 ret, TCGv_i64 arg)
 {
     if (TCG_TARGET_REG_BITS == 32) {
@@ -1926,35 +1845,24 @@ void tcg_gen_bswap64_i64(TCGv_i64 ret, TCGv_i64 arg)
     }
 }
 
-/*
- * hswap_i64: Swap 16-bit halfwords within a 64-bit value.
- * See also include/qemu/bitops.h, hswap64.
- *
- * Byte pattern: abcdefgh -> ghefcdab
- */
 void tcg_gen_hswap_i64(TCGv_i64 ret, TCGv_i64 arg)
 {
     uint64_t m = 0x0000ffff0000ffffull;
     TCGv_i64 t0 = tcg_temp_ebb_new_i64();
     TCGv_i64 t1 = tcg_temp_ebb_new_i64();
 
-                                        /* arg = abcdefgh */
-    tcg_gen_rotli_i64(t1, arg, 32);     /*  t1 = efghabcd */
-    tcg_gen_andi_i64(t0, t1, m);        /*  t0 = ..gh..cd */
-    tcg_gen_shli_i64(t0, t0, 16);       /*  t0 = gh..cd.. */
-    tcg_gen_shri_i64(t1, t1, 16);       /*  t1 = ..efghab */
-    tcg_gen_andi_i64(t1, t1, m);        /*  t1 = ..ef..ab */
-    tcg_gen_or_i64(ret, t0, t1);        /* ret = ghefcdab */
+    /* See include/qemu/bitops.h, hswap64. */
+    tcg_gen_rotli_i64(t1, arg, 32);
+    tcg_gen_andi_i64(t0, t1, m);
+    tcg_gen_shli_i64(t0, t0, 16);
+    tcg_gen_shri_i64(t1, t1, 16);
+    tcg_gen_andi_i64(t1, t1, m);
+    tcg_gen_or_i64(ret, t0, t1);
 
     tcg_temp_free_i64(t0);
     tcg_temp_free_i64(t1);
 }
 
-/*
- * wswap_i64: Swap 32-bit words within a 64-bit value.
- *
- * Byte pattern: abcdefgh -> efghabcd
- */
 void tcg_gen_wswap_i64(TCGv_i64 ret, TCGv_i64 arg)
 {
     /* Swapping 2 32-bit elements is a rotate. */
@@ -2619,7 +2527,8 @@ void tcg_gen_movcond_i64(TCGCond cond, TCGv_i64 ret, TCGv_i64 c1,
     } else {
         TCGv_i64 t0 = tcg_temp_ebb_new_i64();
         TCGv_i64 t1 = tcg_temp_ebb_new_i64();
-        tcg_gen_negsetcond_i64(cond, t0, c1, c2);
+        tcg_gen_setcond_i64(cond, t0, c1, c2);
+        tcg_gen_neg_i64(t0, t0);
         tcg_gen_and_i64(t1, v1, t0);
         tcg_gen_andc_i64(ret, v2, t0);
         tcg_gen_or_i64(ret, ret, t1);
@@ -2772,7 +2681,7 @@ void tcg_gen_extrl_i64_i32(TCGv_i32 ret, TCGv_i64 arg)
 {
     if (TCG_TARGET_REG_BITS == 32) {
         tcg_gen_mov_i32(ret, TCGV_LOW(arg));
-    } else if (TCG_TARGET_HAS_extr_i64_i32) {
+    } else if (TCG_TARGET_HAS_extrl_i64_i32) {
         tcg_gen_op2(INDEX_op_extrl_i64_i32,
                     tcgv_i32_arg(ret), tcgv_i64_arg(arg));
     } else {
@@ -2784,7 +2693,7 @@ void tcg_gen_extrh_i64_i32(TCGv_i32 ret, TCGv_i64 arg)
 {
     if (TCG_TARGET_REG_BITS == 32) {
         tcg_gen_mov_i32(ret, TCGV_HIGH(arg));
-    } else if (TCG_TARGET_HAS_extr_i64_i32) {
+    } else if (TCG_TARGET_HAS_extrh_i64_i32) {
         tcg_gen_op2(INDEX_op_extrh_i64_i32,
                     tcgv_i32_arg(ret), tcgv_i64_arg(arg));
     } else {
@@ -2939,7 +2848,7 @@ void tcg_gen_lookup_and_goto_ptr(void)
 
     plugin_gen_disable_mem_helpers();
     ptr = tcg_temp_ebb_new_ptr();
-    gen_helper_lookup_tb_ptr(ptr, tcg_env);
+    gen_helper_lookup_tb_ptr(ptr, cpu_env);
     tcg_gen_op1i(INDEX_op_goto_ptr, tcgv_ptr_arg(ptr));
     tcg_temp_free_ptr(ptr);
 }

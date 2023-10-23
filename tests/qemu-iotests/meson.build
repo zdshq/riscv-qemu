@@ -1,4 +1,4 @@
-if not have_tools or targetos == 'windows'
+if not have_tools or targetos == 'windows' or get_option('gprof')
   subdir_done()
 endif
 

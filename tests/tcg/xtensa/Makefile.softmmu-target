@@ -1,5 +1,5 @@
 #
-# Xtensa system tests
+# Xtensa softmmu tests
 #
 
 CORE=dc232b

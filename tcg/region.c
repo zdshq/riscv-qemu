@@ -33,18 +33,7 @@
 #include "tcg/tcg.h"
 #include "exec/translation-block.h"
 #include "tcg-internal.h"
-#include "host/cpuinfo.h"
 
-
-/*
- * Local source-level compatibility with Unix.
- * Used by tcg_region_init below.
- */
-#if defined(_WIN32)
-#define PROT_READ   1
-#define PROT_WRITE  2
-#define PROT_EXEC   4
-#endif
 
 struct tcg_region_tree {
     QemuMutex lock;
@@ -93,18 +82,6 @@ bool in_code_gen_buffer(const void *p)
      */
     return (size_t)(p - region.start_aligned) <= region.total_size;
 }
-
-#ifndef CONFIG_TCG_INTERPRETER
-static int host_prot_read_exec(void)
-{
-#if defined(CONFIG_LINUX) && defined(HOST_AARCH64) && defined(PROT_BTI)
-    if (cpuinfo & CPUINFO_BTI) {
-        return PROT_READ | PROT_EXEC | PROT_BTI;
-    }
-#endif
-    return PROT_READ | PROT_EXEC;
-}
-#endif
 
 #ifdef CONFIG_DEBUG_TCG
 const void *tcg_splitwx_to_rx(void *rw)
@@ -528,6 +505,14 @@ static int alloc_code_gen_buffer(size_t tb_size, int splitwx, Error **errp)
     return PROT_READ | PROT_WRITE;
 }
 #elif defined(_WIN32)
+/*
+ * Local source-level compatibility with Unix.
+ * Used by tcg_region_init below.
+ */
+#define PROT_READ   1
+#define PROT_WRITE  2
+#define PROT_EXEC   4
+
 static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
 {
     void *buf;
@@ -582,7 +567,7 @@ static int alloc_code_gen_buffer_splitwx_memfd(size_t size, Error **errp)
         goto fail;
     }
 
-    buf_rx = mmap(NULL, size, host_prot_read_exec(), MAP_SHARED, fd, 0);
+    buf_rx = mmap(NULL, size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
     if (buf_rx == MAP_FAILED) {
         goto fail_rx;
     }
@@ -657,7 +642,7 @@ static int alloc_code_gen_buffer_splitwx_vmremap(size_t size, Error **errp)
         return -1;
     }
 
-    if (mprotect((void *)buf_rx, size, host_prot_read_exec()) != 0) {
+    if (mprotect((void *)buf_rx, size, PROT_READ | PROT_EXEC) != 0) {
         error_setg_errno(errp, errno, "mprotect for jit splitwx");
         munmap((void *)buf_rx, size);
         munmap((void *)buf_rw, size);
@@ -733,7 +718,7 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
  * and then assigning regions to TCG threads so that the threads can translate
  * code in parallel without synchronization.
  *
- * In system-mode the number of TCG threads is bounded by max_cpus, so we use at
+ * In softmmu the number of TCG threads is bounded by max_cpus, so we use at
  * least max_cpus regions in MTTCG. In !MTTCG we use a single region.
  * Note that the TCG options from the command-line (i.e. -accel accel=tcg,[...])
  * must have been parsed before calling this function, since it calls
@@ -749,7 +734,7 @@ static int alloc_code_gen_buffer(size_t size, int splitwx, Error **errp)
  *
  * However, this user-mode limitation is unlikely to be a significant problem
  * in practice. Multi-threaded guests share most if not all of their translated
- * code, which makes parallel code generation less appealing than in system-mode
+ * code, which makes parallel code generation less appealing than in softmmu.
  */
 void tcg_region_init(size_t tb_size, int splitwx, unsigned max_cpus)
 {
@@ -820,7 +805,7 @@ void tcg_region_init(size_t tb_size, int splitwx, unsigned max_cpus)
     need_prot = PROT_READ | PROT_WRITE;
 #ifndef CONFIG_TCG_INTERPRETER
     if (tcg_splitwx_diff == 0) {
-        need_prot |= host_prot_read_exec();
+        need_prot |= PROT_EXEC;
     }
 #endif
     for (size_t i = 0, n = region.n; i < n; i++) {
@@ -835,11 +820,7 @@ void tcg_region_init(size_t tb_size, int splitwx, unsigned max_cpus)
             } else if (need_prot == (PROT_READ | PROT_WRITE)) {
                 rc = qemu_mprotect_rw(start, end - start);
             } else {
-#ifdef CONFIG_POSIX
-                rc = mprotect(start, end - start, need_prot);
-#else
                 g_assert_not_reached();
-#endif
             }
             if (rc) {
                 error_setg_errno(&error_fatal, errno,

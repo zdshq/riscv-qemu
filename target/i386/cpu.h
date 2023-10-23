@@ -728,7 +728,7 @@ uint64_t x86_cpu_get_supported_feature_word(FeatureWord w,
 #define CPUID_EXT2_3DNOWEXT (1U << 30)
 #define CPUID_EXT2_3DNOW   (1U << 31)
 
-/* CPUID[8000_0001].EDX bits that are aliases of CPUID[1].EDX bits on AMD CPUs */
+/* CPUID[8000_0001].EDX bits that are aliase of CPUID[1].EDX bits on AMD CPUs */
 #define CPUID_EXT2_AMD_ALIASES (CPUID_EXT2_FPU | CPUID_EXT2_VME | \
                                 CPUID_EXT2_DE | CPUID_EXT2_PSE | \
                                 CPUID_EXT2_TSC | CPUID_EXT2_MSR | \
@@ -930,8 +930,6 @@ uint64_t x86_cpu_get_supported_feature_word(FeatureWord w,
 #define CPUID_7_1_EDX_AVX_VNNI_INT8     (1U << 4)
 /* AVX NE CONVERT Instructions */
 #define CPUID_7_1_EDX_AVX_NE_CONVERT    (1U << 5)
-/* AMX COMPLEX Instructions */
-#define CPUID_7_1_EDX_AMX_COMPLEX       (1U << 8)
 /* PREFETCHIT0/1 Instructions */
 #define CPUID_7_1_EDX_PREFETCHITI       (1U << 14)
 
@@ -1039,7 +1037,6 @@ uint64_t x86_cpu_get_supported_feature_word(FeatureWord w,
 #define MSR_VMX_BASIC_DUAL_MONITOR                   (1ULL << 49)
 #define MSR_VMX_BASIC_INS_OUTS                       (1ULL << 54)
 #define MSR_VMX_BASIC_TRUE_CTLS                      (1ULL << 55)
-#define MSR_VMX_BASIC_ANY_ERRCODE                    (1ULL << 56)
 
 #define MSR_VMX_MISC_PREEMPTION_TIMER_SHIFT_MASK     0x1Full
 #define MSR_VMX_MISC_STORE_LMA                       (1ULL << 5)
@@ -1114,7 +1111,6 @@ uint64_t x86_cpu_get_supported_feature_word(FeatureWord w,
 #define VMX_SECONDARY_EXEC_ENABLE_PML               0x00020000
 #define VMX_SECONDARY_EXEC_XSAVES                   0x00100000
 #define VMX_SECONDARY_EXEC_TSC_SCALING              0x02000000
-#define VMX_SECONDARY_EXEC_ENABLE_USER_WAIT_PAUSE   0x04000000
 
 #define VMX_PIN_BASED_EXT_INTR_MASK                 0x00000001
 #define VMX_PIN_BASED_NMI_EXITING                   0x00000008
@@ -1901,6 +1897,7 @@ struct ArchCPU {
     CPUState parent_obj;
     /*< public >*/
 
+    CPUNegativeOffsetState neg;
     CPUX86State env;
     VMChangeStateEntry *vmsentry;
 
@@ -2055,7 +2052,7 @@ int x86_cpu_write_elf64_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
 int x86_cpu_write_elf32_qemunote(WriteCoreDumpFunction f, CPUState *cpu,
                                  DumpState *s);
 
-bool x86_cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
+void x86_cpu_get_memory_mapping(CPUState *cpu, MemoryMappingList *list,
                                 Error **errp);
 
 void x86_cpu_dump_state(CPUState *cs, FILE *f, int flags);
@@ -2071,7 +2068,7 @@ hwaddr x86_cpu_get_phys_page_attrs_debug(CPUState *cpu, vaddr addr,
                                          MemTxAttrs *attrs);
 int cpu_get_pic_interrupt(CPUX86State *s);
 
-/* MS-DOS compatibility mode FPU exception support */
+/* MSDOS compatibility mode FPU exception support */
 void x86_register_ferr_irq(qemu_irq irq);
 void fpu_check_raise_ferr_irq(CPUX86State *s);
 void cpu_set_ignne(void);

@@ -54,7 +54,6 @@ static int stream_prepare(Job *job)
 {
     StreamBlockJob *s = container_of(job, StreamBlockJob, common.job);
     BlockDriverState *unfiltered_bs = bdrv_skip_filters(s->target_bs);
-    BlockDriverState *unfiltered_bs_cow = bdrv_cow_bs(unfiltered_bs);
     BlockDriverState *base;
     BlockDriverState *unfiltered_base;
     Error *local_err = NULL;
@@ -65,18 +64,13 @@ static int stream_prepare(Job *job)
     s->cor_filter_bs = NULL;
 
     /*
-     * bdrv_set_backing_hd() requires that the unfiltered_bs and the COW child
-     * of unfiltered_bs is drained. Drain already here and use
-     * bdrv_set_backing_hd_drained() instead because the polling during
-     * drained_begin() might change the graph, and if we do this only later, we
-     * may end up working with the wrong base node (or it might even have gone
-     * away by the time we want to use it).
+     * bdrv_set_backing_hd() requires that unfiltered_bs is drained. Drain
+     * already here and use bdrv_set_backing_hd_drained() instead because
+     * the polling during drained_begin() might change the graph, and if we do
+     * this only later, we may end up working with the wrong base node (or it
+     * might even have gone away by the time we want to use it).
      */
     bdrv_drained_begin(unfiltered_bs);
-    if (unfiltered_bs_cow) {
-        bdrv_ref(unfiltered_bs_cow);
-        bdrv_drained_begin(unfiltered_bs_cow);
-    }
 
     base = bdrv_filter_or_cow_bs(s->above_base);
     unfiltered_base = bdrv_skip_filters(base);
@@ -106,10 +100,6 @@ static int stream_prepare(Job *job)
     }
 
 out:
-    if (unfiltered_bs_cow) {
-        bdrv_drained_end(unfiltered_bs_cow);
-        bdrv_unref(unfiltered_bs_cow);
-    }
     bdrv_drained_end(unfiltered_bs);
     return ret;
 }
@@ -172,7 +162,7 @@ static int coroutine_fn stream_run(Job *job, Error **errp)
         copy = false;
 
         WITH_GRAPH_RDLOCK_GUARD() {
-            ret = bdrv_co_is_allocated(unfiltered_bs, offset, STREAM_CHUNK, &n);
+            ret = bdrv_is_allocated(unfiltered_bs, offset, STREAM_CHUNK, &n);
             if (ret == 1) {
                 /* Allocated in the top, no need to copy.  */
             } else if (ret >= 0) {
@@ -180,9 +170,9 @@ static int coroutine_fn stream_run(Job *job, Error **errp)
                  * Copy if allocated in the intermediate images.  Limit to the
                  * known-unallocated area [offset, offset+n*BDRV_SECTOR_SIZE).
                  */
-                ret = bdrv_co_is_allocated_above(bdrv_cow_bs(unfiltered_bs),
-                                                 s->base_overlay, true,
-                                                 offset, n, &n);
+                ret = bdrv_is_allocated_above(bdrv_cow_bs(unfiltered_bs),
+                                            s->base_overlay, true,
+                                            offset, n, &n);
                 /* Finish early if end of backing file has been reached */
                 if (ret == 0 && n == 0) {
                     n = len - offset;
@@ -292,6 +282,7 @@ void stream_start(const char *job_id, BlockDriverState *bs,
     /* Make sure that the image is opened in read-write mode */
     bs_read_only = bdrv_is_read_only(bs);
     if (bs_read_only) {
+        int ret;
         /* Hold the chain during reopen */
         if (bdrv_freeze_backing_chain(bs, above_base, errp) < 0) {
             return;

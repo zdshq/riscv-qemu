@@ -239,6 +239,8 @@ static void superh_cpu_initfn(Object *obj)
     SuperHCPU *cpu = SUPERH_CPU(obj);
     CPUSH4State *env = &cpu->env;
 
+    cpu_set_cpustate_pointers(cpu);
+
     env->movcal_backup_tail = &(env->movcal_backup);
 }
 
@@ -313,7 +315,6 @@ static const TypeInfo superh_cpu_type_infos[] = {
         .name = TYPE_SUPERH_CPU,
         .parent = TYPE_CPU,
         .instance_size = sizeof(SuperHCPU),
-        .instance_align = __alignof(SuperHCPU),
         .instance_init = superh_cpu_initfn,
         .abstract = true,
         .class_size = sizeof(SuperHCPUClass),

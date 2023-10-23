@@ -475,10 +475,10 @@ static int command_loop(void)
     return last_error;
 }
 
-static void add_user_command(char *user_cmd)
+static void add_user_command(char *optarg)
 {
     cmdline = g_renew(char *, cmdline, ++ncmdline);
-    cmdline[ncmdline - 1] = user_cmd;
+    cmdline[ncmdline-1] = optarg;
 }
 
 static void reenable_tty_echo(void)

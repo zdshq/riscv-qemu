@@ -16,7 +16,6 @@ system_ss.add(files(
   'dirtyrate.c',
   'exec.c',
   'fd.c',
-  'file.c',
   'global_state.c',
   'migration-hmp-cmds.c',
   'migration.c',

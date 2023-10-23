@@ -2,6 +2,8 @@
 #include "hw/core/cpu.h"
 #include "exec/replay-core.h"
 
+bool enable_cpu_pm = false;
+
 void cpu_resume(CPUState *cpu)
 {
 }

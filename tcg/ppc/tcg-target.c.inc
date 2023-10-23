@@ -261,7 +261,7 @@ static bool reloc_pc14(tcg_insn_unit *src_rw, const tcg_insn_unit *target)
 }
 
 /* test if a constant matches the constraint */
-static bool tcg_target_const_match(int64_t val, TCGType type, int ct, int vece)
+static bool tcg_target_const_match(int64_t val, TCGType type, int ct)
 {
     if (ct & TCG_CT_CONST) {
         return 1;
@@ -446,11 +446,6 @@ static bool tcg_target_const_match(int64_t val, TCGType type, int ct, int vece)
 
 #define TW     XO31( 4)
 #define TRAP   (TW | TO(31))
-
-#define SETBC    XO31(384)  /* v3.10 */
-#define SETBCR   XO31(416)  /* v3.10 */
-#define SETNBC   XO31(448)  /* v3.10 */
-#define SETNBCR  XO31(480)  /* v3.10 */
 
 #define NOP    ORI  /* ori 0,0,0 */
 
@@ -1553,20 +1548,8 @@ static void tcg_out_cmp(TCGContext *s, int cond, TCGArg arg1, TCGArg arg2,
 }
 
 static void tcg_out_setcond_eq0(TCGContext *s, TCGType type,
-                                TCGReg dst, TCGReg src, bool neg)
+                                TCGReg dst, TCGReg src)
 {
-    if (neg && (TCG_TARGET_REG_BITS == 32 || type == TCG_TYPE_I64)) {
-        /*
-         * X != 0 implies X + -1 generates a carry.
-         * RT = (~X + X) + CA
-         *    = -1 + CA
-         *    = CA ? 0 : -1
-         */
-        tcg_out32(s, ADDIC | TAI(TCG_REG_R0, src, -1));
-        tcg_out32(s, SUBFE | TAB(dst, src, src));
-        return;
-    }
-
     if (type == TCG_TYPE_I32) {
         tcg_out32(s, CNTLZW | RS(src) | RA(dst));
         tcg_out_shri32(s, dst, dst, 5);
@@ -1574,28 +1557,18 @@ static void tcg_out_setcond_eq0(TCGContext *s, TCGType type,
         tcg_out32(s, CNTLZD | RS(src) | RA(dst));
         tcg_out_shri64(s, dst, dst, 6);
     }
-    if (neg) {
-        tcg_out32(s, NEG | RT(dst) | RA(dst));
-    }
 }
 
-static void tcg_out_setcond_ne0(TCGContext *s, TCGType type,
-                                TCGReg dst, TCGReg src, bool neg)
+static void tcg_out_setcond_ne0(TCGContext *s, TCGReg dst, TCGReg src)
 {
-    if (!neg && (TCG_TARGET_REG_BITS == 32 || type == TCG_TYPE_I64)) {
-        /*
-         * X != 0 implies X + -1 generates a carry.  Extra addition
-         * trickery means: R = X-1 + ~X + C = X-1 + (-X+1) + C = C.
-         */
+    /* X != 0 implies X + -1 generates a carry.  Extra addition
+       trickery means: R = X-1 + ~X + C = X-1 + (-X+1) + C = C.  */
+    if (dst != src) {
+        tcg_out32(s, ADDIC | TAI(dst, src, -1));
+        tcg_out32(s, SUBFE | TAB(dst, dst, src));
+    } else {
         tcg_out32(s, ADDIC | TAI(TCG_REG_R0, src, -1));
         tcg_out32(s, SUBFE | TAB(dst, TCG_REG_R0, src));
-        return;
-    }
-    tcg_out_setcond_eq0(s, type, dst, src, false);
-    if (neg) {
-        tcg_out32(s, ADDI | TAI(dst, dst, -1));
-    } else {
-        tcg_out_xori32(s, dst, dst, 1);
     }
 }
 
@@ -1617,10 +1590,9 @@ static TCGReg tcg_gen_setcond_xor(TCGContext *s, TCGReg arg1, TCGArg arg2,
 
 static void tcg_out_setcond(TCGContext *s, TCGType type, TCGCond cond,
                             TCGArg arg0, TCGArg arg1, TCGArg arg2,
-                            int const_arg2, bool neg)
+                            int const_arg2)
 {
-    int sh;
-    bool inv;
+    int crop, sh;
 
     tcg_debug_assert(TCG_TARGET_REG_BITS == 64 || type == TCG_TYPE_I32);
 
@@ -1629,31 +1601,18 @@ static void tcg_out_setcond(TCGContext *s, TCGType type, TCGCond cond,
         arg2 = (uint32_t)arg2;
     }
 
-    /* With SETBC/SETBCR, we can always implement with 2 insns. */
-    if (have_isa_3_10) {
-        tcg_insn_unit bi, opc;
-
-        tcg_out_cmp(s, cond, arg1, arg2, const_arg2, 7, type);
-
-        /* Re-use tcg_to_bc for BI and BO_COND_{TRUE,FALSE}. */
-        bi = tcg_to_bc[cond] & (0x1f << 16);
-        if (tcg_to_bc[cond] & BO(8)) {
-            opc = neg ? SETNBC : SETBC;
-        } else {
-            opc = neg ? SETNBCR : SETBCR;
-        }
-        tcg_out32(s, opc | RT(arg0) | bi);
-        return;
-    }
-
     /* Handle common and trivial cases before handling anything else.  */
     if (arg2 == 0) {
         switch (cond) {
         case TCG_COND_EQ:
-            tcg_out_setcond_eq0(s, type, arg0, arg1, neg);
+            tcg_out_setcond_eq0(s, type, arg0, arg1);
             return;
         case TCG_COND_NE:
-            tcg_out_setcond_ne0(s, type, arg0, arg1, neg);
+            if (TCG_TARGET_REG_BITS == 64 && type == TCG_TYPE_I32) {
+                tcg_out_ext32u(s, TCG_REG_R0, arg1);
+                arg1 = TCG_REG_R0;
+            }
+            tcg_out_setcond_ne0(s, arg0, arg1);
             return;
         case TCG_COND_GE:
             tcg_out32(s, NOR | SAB(arg1, arg0, arg1));
@@ -1662,17 +1621,9 @@ static void tcg_out_setcond(TCGContext *s, TCGType type, TCGCond cond,
         case TCG_COND_LT:
             /* Extract the sign bit.  */
             if (type == TCG_TYPE_I32) {
-                if (neg) {
-                    tcg_out_sari32(s, arg0, arg1, 31);
-                } else {
-                    tcg_out_shri32(s, arg0, arg1, 31);
-                }
+                tcg_out_shri32(s, arg0, arg1, 31);
             } else {
-                if (neg) {
-                    tcg_out_sari64(s, arg0, arg1, 63);
-                } else {
-                    tcg_out_shri64(s, arg0, arg1, 63);
-                }
+                tcg_out_shri64(s, arg0, arg1, 63);
             }
             return;
         default:
@@ -1690,7 +1641,7 @@ static void tcg_out_setcond(TCGContext *s, TCGType type, TCGCond cond,
 
         isel = tcg_to_isel[cond];
 
-        tcg_out_movi(s, type, arg0, neg ? -1 : 1);
+        tcg_out_movi(s, type, arg0, 1);
         if (isel & 1) {
             /* arg0 = (bc ? 0 : 1) */
             tab = TAB(arg0, 0, arg0);
@@ -1704,47 +1655,51 @@ static void tcg_out_setcond(TCGContext *s, TCGType type, TCGCond cond,
         return;
     }
 
-    inv = false;
     switch (cond) {
     case TCG_COND_EQ:
         arg1 = tcg_gen_setcond_xor(s, arg1, arg2, const_arg2);
-        tcg_out_setcond_eq0(s, type, arg0, arg1, neg);
-        break;
+        tcg_out_setcond_eq0(s, type, arg0, arg1);
+        return;
 
     case TCG_COND_NE:
         arg1 = tcg_gen_setcond_xor(s, arg1, arg2, const_arg2);
-        tcg_out_setcond_ne0(s, type, arg0, arg1, neg);
-        break;
+        /* Discard the high bits only once, rather than both inputs.  */
+        if (TCG_TARGET_REG_BITS == 64 && type == TCG_TYPE_I32) {
+            tcg_out_ext32u(s, TCG_REG_R0, arg1);
+            arg1 = TCG_REG_R0;
+        }
+        tcg_out_setcond_ne0(s, arg0, arg1);
+        return;
 
-    case TCG_COND_LE:
-    case TCG_COND_LEU:
-        inv = true;
-        /* fall through */
     case TCG_COND_GT:
     case TCG_COND_GTU:
-        sh = 30; /* CR7 CR_GT */
+        sh = 30;
+        crop = 0;
+        goto crtest;
+
+    case TCG_COND_LT:
+    case TCG_COND_LTU:
+        sh = 29;
+        crop = 0;
         goto crtest;
 
     case TCG_COND_GE:
     case TCG_COND_GEU:
-        inv = true;
-        /* fall through */
-    case TCG_COND_LT:
-    case TCG_COND_LTU:
-        sh = 29; /* CR7 CR_LT */
+        sh = 31;
+        crop = CRNOR | BT(7, CR_EQ) | BA(7, CR_LT) | BB(7, CR_LT);
         goto crtest;
 
+    case TCG_COND_LE:
+    case TCG_COND_LEU:
+        sh = 31;
+        crop = CRNOR | BT(7, CR_EQ) | BA(7, CR_GT) | BB(7, CR_GT);
     crtest:
         tcg_out_cmp(s, cond, arg1, arg2, const_arg2, 7, type);
+        if (crop) {
+            tcg_out32(s, crop);
+        }
         tcg_out32(s, MFOCRF | RT(TCG_REG_R0) | FXM(7));
         tcg_out_rlw(s, RLWINM, arg0, TCG_REG_R0, sh, 31, 31);
-        if (neg && inv) {
-            tcg_out32(s, ADDI | TAI(arg0, arg0, -1));
-        } else if (neg) {
-            tcg_out32(s, NEG | RT(arg0) | RA(arg0));
-        } else if (inv) {
-            tcg_out_xori32(s, arg0, arg0, 1);
-        }
         break;
 
     default:
@@ -2091,8 +2046,8 @@ bool tcg_target_has_memory_bswap(MemOp memop)
 #define MIN_TLB_MASK_TABLE_OFS  -32768
 
 /*
- * For system-mode, perform the TLB load and compare.
- * For user-mode, perform any required alignment tests.
+ * For softmmu, perform the TLB load and compare.
+ * For useronly, perform any required alignment tests.
  * In both cases, return a TCGLabelQemuLdst structure if the slow path
  * is required and fill in @h with the host address for the fast path.
  */
@@ -2525,11 +2480,6 @@ static void tcg_target_qemu_prologue(TCGContext *s)
     tcg_out32(s, MTSPR | RS(TCG_REG_R0) | LR);
     tcg_out32(s, ADDI | TAI(TCG_REG_R1, TCG_REG_R1, FRAME_SIZE));
     tcg_out32(s, BCLR | BO_ALWAYS);
-}
-
-static void tcg_out_tb_start(TCGContext *s)
-{
-    /* nothing to do */
 }
 
 static void tcg_out_exit_tb(TCGContext *s, uintptr_t arg)
@@ -3032,19 +2982,11 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
 
     case INDEX_op_setcond_i32:
         tcg_out_setcond(s, TCG_TYPE_I32, args[3], args[0], args[1], args[2],
-                        const_args[2], false);
+                        const_args[2]);
         break;
     case INDEX_op_setcond_i64:
         tcg_out_setcond(s, TCG_TYPE_I64, args[3], args[0], args[1], args[2],
-                        const_args[2], false);
-        break;
-    case INDEX_op_negsetcond_i32:
-        tcg_out_setcond(s, TCG_TYPE_I32, args[3], args[0], args[1], args[2],
-                        const_args[2], true);
-        break;
-    case INDEX_op_negsetcond_i64:
-        tcg_out_setcond(s, TCG_TYPE_I64, args[3], args[0], args[1], args[2],
-                        const_args[2], true);
+                        const_args[2]);
         break;
     case INDEX_op_setcond2_i32:
         tcg_out_setcond2(s, args, const_args);
@@ -3782,7 +3724,6 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode op)
     case INDEX_op_rotl_i32:
     case INDEX_op_rotr_i32:
     case INDEX_op_setcond_i32:
-    case INDEX_op_negsetcond_i32:
     case INDEX_op_and_i64:
     case INDEX_op_andc_i64:
     case INDEX_op_shl_i64:
@@ -3791,7 +3732,6 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode op)
     case INDEX_op_rotl_i64:
     case INDEX_op_rotr_i64:
     case INDEX_op_setcond_i64:
-    case INDEX_op_negsetcond_i64:
         return C_O1_I2(r, r, ri);
 
     case INDEX_op_mul_i32:

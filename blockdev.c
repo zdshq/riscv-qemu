@@ -1041,8 +1041,6 @@ static BlockDriverState *qmp_get_root_bs(const char *name, Error **errp)
     BlockDriverState *bs;
     AioContext *aio_context;
 
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
-
     bs = bdrv_lookup_bs(name, name, errp);
     if (bs == NULL) {
         return NULL;
@@ -1138,9 +1136,6 @@ SnapshotInfo *qmp_blockdev_snapshot_delete_internal_sync(const char *device,
     SnapshotInfo *info = NULL;
     int ret;
 
-    GLOBAL_STATE_CODE();
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
-
     bs = qmp_get_root_bs(device, errp);
     if (!bs) {
         return NULL;
@@ -1225,9 +1220,6 @@ static void internal_snapshot_action(BlockdevSnapshotInternal *internal,
     InternalSnapshotState *state = g_new0(InternalSnapshotState, 1);
     AioContext *aio_context;
     int ret1;
-
-    GLOBAL_STATE_CODE();
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     tran_add(tran, &internal_snapshot_drv, state);
 
@@ -1317,9 +1309,6 @@ static void internal_snapshot_abort(void *opaque)
     AioContext *aio_context;
     Error *local_error = NULL;
 
-    GLOBAL_STATE_CODE();
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
-
     if (!state->created) {
         return;
     }
@@ -1388,9 +1377,6 @@ static void external_snapshot_action(TransactionAction *action,
     ExternalSnapshotState *state = g_new0(ExternalSnapshotState, 1);
     AioContext *aio_context;
     uint64_t perm, shared;
-
-    /* TODO We'll eventually have to take a writer lock in this function */
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     tran_add(tran, &external_snapshot_drv, state);
 
@@ -1665,8 +1651,6 @@ static void drive_backup_action(DriveBackup *backup,
     bool set_backing_hd = false;
     int ret;
 
-    GLOBAL_STATE_CODE();
-
     tran_add(tran, &drive_backup_drv, state);
 
     if (!backup->has_mode) {
@@ -1696,12 +1680,9 @@ static void drive_backup_action(DriveBackup *backup,
     }
 
     /* Early check to avoid creating target */
-    bdrv_graph_rdlock_main_loop();
     if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_BACKUP_SOURCE, errp)) {
-        bdrv_graph_rdunlock_main_loop();
         goto out;
     }
-    bdrv_graph_rdunlock_main_loop();
 
     flags = bs->open_flags | BDRV_O_RDWR;
 
@@ -1740,10 +1721,7 @@ static void drive_backup_action(DriveBackup *backup,
             BlockDriverState *explicit_backing =
                 bdrv_skip_implicit_filters(source);
 
-            bdrv_graph_rdlock_main_loop();
             bdrv_refresh_filename(explicit_backing);
-            bdrv_graph_rdunlock_main_loop();
-
             bdrv_img_create(backup->target, format,
                             explicit_backing->filename,
                             explicit_backing->drv->format_name, NULL,
@@ -2363,13 +2341,10 @@ void coroutine_fn qmp_block_resize(const char *device, const char *node_name,
         return;
     }
 
-    bdrv_graph_co_rdlock();
     if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_RESIZE, NULL)) {
         error_setg(errp, QERR_DEVICE_IN_USE, device);
-        bdrv_graph_co_rdunlock();
         return;
     }
-    bdrv_graph_co_rdunlock();
 
     blk = blk_co_new_with_bs(bs, BLK_PERM_RESIZE, BLK_PERM_ALL, errp);
     if (!blk) {
@@ -2408,8 +2383,6 @@ void qmp_block_stream(const char *job_id, const char *device,
     AioContext *aio_context;
     Error *local_err = NULL;
     int job_flags = JOB_DEFAULT;
-
-    GLOBAL_STATE_CODE();
 
     if (base && base_node) {
         error_setg(errp, "'base' and 'base-node' cannot be specified "
@@ -2461,10 +2434,7 @@ void qmp_block_stream(const char *job_id, const char *device,
             goto out;
         }
         assert(bdrv_get_aio_context(base_bs) == aio_context);
-
-        bdrv_graph_rdlock_main_loop();
         bdrv_refresh_filename(base_bs);
-        bdrv_graph_rdunlock_main_loop();
     }
 
     if (bottom) {
@@ -2493,16 +2463,13 @@ void qmp_block_stream(const char *job_id, const char *device,
      * Check for op blockers in the whole chain between bs and base (or bottom)
      */
     iter_end = bottom ? bdrv_filter_or_cow_bs(bottom_bs) : base_bs;
-    bdrv_graph_rdlock_main_loop();
     for (iter = bs; iter && iter != iter_end;
          iter = bdrv_filter_or_cow_bs(iter))
     {
         if (bdrv_op_is_blocked(iter, BLOCK_OP_TYPE_STREAM, errp)) {
-            bdrv_graph_rdunlock_main_loop();
             goto out;
         }
     }
-    bdrv_graph_rdunlock_main_loop();
 
     /* if we are streaming the entire chain, the result will have no backing
      * file, and specifying one is therefore an error */
@@ -2553,9 +2520,6 @@ void qmp_block_commit(const char *job_id, const char *device,
     Error *local_err = NULL;
     int job_flags = JOB_DEFAULT;
     uint64_t top_perm, top_shared;
-
-    /* TODO We'll eventually have to take a writer lock in this function */
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     if (!has_speed) {
         speed = 0;
@@ -2865,8 +2829,6 @@ BlockDeviceInfoList *qmp_query_named_block_nodes(bool has_flat,
 
 XDbgBlockGraph *qmp_x_debug_query_block_graph(Error **errp)
 {
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
-
     return bdrv_get_xdbg_block_graph(errp);
 }
 
@@ -3030,12 +2992,9 @@ void qmp_drive_mirror(DriveMirror *arg, Error **errp)
     }
 
     /* Early check to avoid creating target */
-    bdrv_graph_rdlock_main_loop();
     if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_MIRROR_SOURCE, errp)) {
-        bdrv_graph_rdunlock_main_loop();
         return;
     }
-    bdrv_graph_rdunlock_main_loop();
 
     aio_context = bdrv_get_aio_context(bs);
     aio_context_acquire(aio_context);
@@ -3098,10 +3057,7 @@ void qmp_drive_mirror(DriveMirror *arg, Error **errp)
             break;
         case NEW_IMAGE_MODE_ABSOLUTE_PATHS:
             /* create new image with backing file */
-            bdrv_graph_rdlock_main_loop();
             bdrv_refresh_filename(explicit_backing);
-            bdrv_graph_rdunlock_main_loop();
-
             bdrv_img_create(arg->target, format,
                             explicit_backing->filename,
                             explicit_backing->drv->format_name,
@@ -3421,12 +3377,9 @@ void qmp_change_backing_file(const char *device,
 
     /* even though we are not necessarily operating on bs, we need it to
      * determine if block ops are currently prohibited on the chain */
-    bdrv_graph_rdlock_main_loop();
     if (bdrv_op_is_blocked(bs, BLOCK_OP_TYPE_CHANGE, errp)) {
-        bdrv_graph_rdunlock_main_loop();
         goto out;
     }
-    bdrv_graph_rdunlock_main_loop();
 
     /* final sanity check */
     if (!bdrv_chain_contains(bs, image_bs)) {
@@ -3550,7 +3503,6 @@ void qmp_blockdev_del(const char *node_name, Error **errp)
     BlockDriverState *bs;
 
     GLOBAL_STATE_CODE();
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     bs = bdrv_find_node(node_name);
     if (!bs) {
@@ -3587,8 +3539,8 @@ out:
     aio_context_release(aio_context);
 }
 
-static BdrvChild * GRAPH_RDLOCK
-bdrv_find_child(BlockDriverState *parent_bs, const char *child_name)
+static BdrvChild *bdrv_find_child(BlockDriverState *parent_bs,
+                                  const char *child_name)
 {
     BdrvChild *child;
 
@@ -3607,11 +3559,9 @@ void qmp_x_blockdev_change(const char *parent, const char *child,
     BlockDriverState *parent_bs, *new_bs = NULL;
     BdrvChild *p_child;
 
-    bdrv_graph_wrlock(NULL);
-
     parent_bs = bdrv_lookup_bs(parent, parent, errp);
     if (!parent_bs) {
-        goto out;
+        return;
     }
 
     if (!child == !node) {
@@ -3620,7 +3570,7 @@ void qmp_x_blockdev_change(const char *parent, const char *child,
         } else {
             error_setg(errp, "Either child or node must be specified");
         }
-        goto out;
+        return;
     }
 
     if (child) {
@@ -3628,7 +3578,7 @@ void qmp_x_blockdev_change(const char *parent, const char *child,
         if (!p_child) {
             error_setg(errp, "Node '%s' does not have child '%s'",
                        parent, child);
-            goto out;
+            return;
         }
         bdrv_del_child(parent_bs, p_child, errp);
     }
@@ -3637,13 +3587,10 @@ void qmp_x_blockdev_change(const char *parent, const char *child,
         new_bs = bdrv_find_node(node);
         if (!new_bs) {
             error_setg(errp, "Node '%s' not found", node);
-            goto out;
+            return;
         }
         bdrv_add_child(parent_bs, new_bs, errp);
     }
-
-out:
-    bdrv_graph_wrunlock();
 }
 
 BlockJobInfoList *qmp_query_block_jobs(Error **errp)
@@ -3677,8 +3624,6 @@ void qmp_x_blockdev_set_iothread(const char *node_name, StrOrNull *iothread,
     AioContext *old_context;
     AioContext *new_context;
     BlockDriverState *bs;
-
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     bs = bdrv_find_node(node_name);
     if (!bs) {

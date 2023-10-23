@@ -154,9 +154,9 @@ static KVMMSRHandlers msr_handlers[KVM_MSR_FILTER_MAX_RANGES];
 static RateLimit bus_lock_ratelimit_ctrl;
 static int kvm_get_one_msr(X86CPU *cpu, int index, uint64_t *value);
 
-bool kvm_has_pit_state2(void)
+int kvm_has_pit_state2(void)
 {
-    return !!has_pit_state2;
+    return has_pit_state2;
 }
 
 bool kvm_has_smm(void)
@@ -373,8 +373,6 @@ uint32_t kvm_arch_get_supported_cpuid(KVMState *s, uint32_t function,
     if (function == 1 && reg == R_EDX) {
         /* KVM before 2.6.30 misreports the following features */
         ret |= CPUID_MTRR | CPUID_PAT | CPUID_MCE | CPUID_MCA;
-        /* KVM never reports CPUID_HT but QEMU can support when vcpus > 1 */
-        ret |= CPUID_HT;
     } else if (function == 1 && reg == R_ECX) {
         /* We can set the hypervisor flag, even if KVM does not return it on
          * GET_SUPPORTED_CPUID
@@ -1603,7 +1601,7 @@ static int hyperv_init_vcpu(X86CPU *cpu)
         error_setg(&hv_passthrough_mig_blocker,
                    "'hv-passthrough' CPU flag prevents migration, use explicit"
                    " set of hv-* flags instead");
-        ret = migrate_add_blocker(&hv_passthrough_mig_blocker, &local_err);
+        ret = migrate_add_blocker(hv_passthrough_mig_blocker, &local_err);
         if (ret < 0) {
             error_report_err(local_err);
             return ret;
@@ -1617,7 +1615,7 @@ static int hyperv_init_vcpu(X86CPU *cpu)
                    " use explicit 'hv-no-nonarch-coresharing=on' instead (but"
                    " make sure SMT is disabled and/or that vCPUs are properly"
                    " pinned)");
-        ret = migrate_add_blocker(&hv_no_nonarch_cs_mig_blocker, &local_err);
+        ret = migrate_add_blocker(hv_no_nonarch_cs_mig_blocker, &local_err);
         if (ret < 0) {
             error_report_err(local_err);
             return ret;
@@ -2213,7 +2211,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
             error_setg(&invtsc_mig_blocker,
                        "State blocked by non-migratable CPU device"
                        " (invtsc flag)");
-            r = migrate_add_blocker(&invtsc_mig_blocker, &local_err);
+            r = migrate_add_blocker(invtsc_mig_blocker, &local_err);
             if (r < 0) {
                 error_report_err(local_err);
                 return r;
@@ -2271,7 +2269,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
     return 0;
 
  fail:
-    migrate_del_blocker(&invtsc_mig_blocker);
+    migrate_del_blocker(invtsc_mig_blocker);
 
     return r;
 }
@@ -2558,11 +2556,6 @@ static void register_smram_listener(Notifier *n, void *unused)
                                  &smram_address_space, 1, "kvm-smram");
 }
 
-int kvm_arch_get_default_type(MachineState *ms)
-{
-    return 0;
-}
-
 int kvm_arch_init(MachineState *ms, KVMState *s)
 {
     uint64_t identity_base = 0xfffbc000;
@@ -2701,6 +2694,8 @@ int kvm_arch_init(MachineState *ms, KVMState *s)
 
     if (enable_cpu_pm) {
         int disable_exits = kvm_check_extension(s, KVM_CAP_X86_DISABLE_EXITS);
+        int ret;
+
 /* Work around for kernel header with a typo. TODO: fix header and drop. */
 #if defined(KVM_X86_DISABLE_EXITS_HTL) && !defined(KVM_X86_DISABLE_EXITS_HLT)
 #define KVM_X86_DISABLE_EXITS_HLT KVM_X86_DISABLE_EXITS_HTL
@@ -3610,7 +3605,7 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
         if (kvm_enabled() && cpu->enable_pmu &&
             (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_ARCH_LBR)) {
             uint64_t depth;
-            int ret;
+            int i, ret;
 
             /*
              * Only migrate Arch LBR states when the host Arch LBR depth
@@ -3643,6 +3638,8 @@ static int kvm_put_msrs(X86CPU *cpu, int level)
     }
 
     if (env->mcg_cap) {
+        int i;
+
         kvm_msr_entry_add(cpu, MSR_MCG_STATUS, env->mcg_status);
         kvm_msr_entry_add(cpu, MSR_MCG_CTL, env->mcg_ctl);
         if (has_msr_mcg_ext_ctl) {
@@ -4039,6 +4036,7 @@ static int kvm_get_msrs(X86CPU *cpu)
     if (kvm_enabled() && cpu->enable_pmu &&
         (env->features[FEAT_7_0_EDX] & CPUID_7_0_EDX_ARCH_LBR)) {
         uint64_t depth;
+        int i, ret;
 
         ret = kvm_get_one_msr(cpu, MSR_ARCH_LBR_DEPTH, &depth);
         if (ret == 1 && depth == ARCH_LBR_NR_ENTRIES) {
@@ -4726,7 +4724,7 @@ int kvm_arch_put_registers(CPUState *cpu, int level)
     /*
      * Put MSR_IA32_FEATURE_CONTROL first, this ensures the VM gets out of VMX
      * root operation upon vCPU reset. kvm_put_msr_feature_control() should also
-     * precede kvm_put_nested_state() when 'real' nested state is set.
+     * preceed kvm_put_nested_state() when 'real' nested state is set.
      */
     if (level >= KVM_PUT_RESET_STATE) {
         ret = kvm_put_msr_feature_control(x86_cpu);
@@ -4997,7 +4995,7 @@ MemTxAttrs kvm_arch_post_run(CPUState *cpu, struct kvm_run *run)
         kvm_rate_limit_on_bus_lock();
     }
 
-#ifdef CONFIG_XEN_EMU
+#ifdef CONFIG_XEN_EMU    
     /*
      * If the callback is asserted as a GSI (or PCI INTx) then check if
      * vcpu_info->evtchn_upcall_pending has been cleared, and deassert
@@ -5158,7 +5156,8 @@ static int find_hw_breakpoint(target_ulong addr, int len, int type)
     return -1;
 }
 
-int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_insert_hw_breakpoint(target_ulong addr,
+                                  target_ulong len, int type)
 {
     switch (type) {
     case GDB_BREAKPOINT_HW:
@@ -5198,7 +5197,8 @@ int kvm_arch_insert_hw_breakpoint(vaddr addr, vaddr len, int type)
     return 0;
 }
 
-int kvm_arch_remove_hw_breakpoint(vaddr addr, vaddr len, int type)
+int kvm_arch_remove_hw_breakpoint(target_ulong addr,
+                                  target_ulong len, int type)
 {
     int n;
 
@@ -5650,7 +5650,7 @@ int kvm_arch_fixup_msi_route(struct kvm_irq_routing_entry *route,
             }
 
             /*
-             * Handled untranslated compatibility format interrupt with
+             * Handled untranslated compatibilty format interrupt with
              * extended destination ID in the low bits 11-5. */
             dst.address = kvm_swizzle_msi_ext_dest_id(dst.address);
 

@@ -560,8 +560,9 @@ struct ArchCPU {
     CPUState parent_obj;
     /*< public >*/
 
-    CPUXtensaState env;
     Clock *clock;
+    CPUNegativeOffsetState neg;
+    CPUXtensaState env;
 };
 
 

@@ -7,11 +7,11 @@
 #ifndef EXEC_TRANSLATION_BLOCK_H
 #define EXEC_TRANSLATION_BLOCK_H
 
+#include "qemu/atomic.h"
 #include "qemu/thread.h"
-#include "exec/cpu-common.h"
-#ifdef CONFIG_USER_ONLY
 #include "qemu/interval-tree.h"
-#endif
+#include "exec/cpu-common.h"
+#include "exec/target_page.h"
 
 /*
  * Page tracking code uses ram addresses in system mode, and virtual

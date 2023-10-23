@@ -1,5 +1,5 @@
 /*
- * TCG Helper Information Structure
+ * TCG Helper Infomation Structure
  *
  * Copyright (c) 2023 Linaro Ltd
  *

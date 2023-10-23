@@ -316,6 +316,6 @@ variable::
 
     host_kconfig = \
       (have_tpm ? ['CONFIG_TPM=y'] : []) + \
-      (targetos == 'linux' ? ['CONFIG_LINUX=y'] : []) + \
+      ('CONFIG_LINUX' in config_host ? ['CONFIG_LINUX=y'] : []) + \
       (have_ivshmem ? ['CONFIG_IVSHMEM=y'] : []) + \
       ...

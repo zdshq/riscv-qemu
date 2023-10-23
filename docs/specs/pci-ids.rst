@@ -92,8 +92,6 @@ PCI devices (other than virtio):
   PCI PVPanic device (``-device pvpanic-pci``)
 1b36:0012
   PCI ACPI ERST device (``-device acpi-erst``)
-1b36:0013
-  PCI UFS device (``-device ufs``)
 
 All these devices are documented in :doc:`index`.
 

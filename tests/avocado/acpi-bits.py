@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # group: rw quick
-# Exercise QEMU generated ACPI/SMBIOS tables using biosbits,
+# Exercize QEMU generated ACPI/SMBIOS tables using biosbits,
 # https://biosbits.org/
 #
 # This program is free software; you can redistribute it and/or modify
@@ -92,14 +92,17 @@ class QEMUBitsMachine(QEMUMachine): # pylint: disable=too-few-public-methods
                  base_temp_dir: str = "/var/tmp",
                  debugcon_log: str = "debugcon-log.txt",
                  debugcon_addr: str = "0x403",
+                 sock_dir: Optional[str] = None,
                  qmp_timer: Optional[float] = None):
         # pylint: disable=too-many-arguments
 
         if name is None:
             name = "qemu-bits-%d" % os.getpid()
+        if sock_dir is None:
+            sock_dir = base_temp_dir
         super().__init__(binary, args, wrapper=wrapper, name=name,
                          base_temp_dir=base_temp_dir,
-                         qmp_timer=qmp_timer)
+                         sock_dir=sock_dir, qmp_timer=qmp_timer)
         self.debugcon_log = debugcon_log
         self.debugcon_addr = debugcon_addr
         self.base_temp_dir = base_temp_dir
@@ -363,7 +366,7 @@ class AcpiBitsTest(QemuBaseTest): #pylint: disable=too-many-instance-attributes
         super().tearDown()
 
     def test_acpi_smbios_bits(self):
-        """The main test case implementation."""
+        """The main test case implementaion."""
 
         iso_file = os.path.join(self._workDir,
                                 'bits-%d.iso' %self._bitsInternalVer)

@@ -42,8 +42,7 @@
 #include "tb-jmp-cache.h"
 #include "tb-hash.h"
 #include "tb-context.h"
-#include "internal-common.h"
-#include "internal-target.h"
+#include "internal.h"
 
 /* -icount align implementation. */
 
@@ -74,7 +73,7 @@ static void align_clocks(SyncClocks *sc, CPUState *cpu)
         return;
     }
 
-    cpu_icount = cpu->icount_extra + cpu->neg.icount_decr.u16.low;
+    cpu_icount = cpu->icount_extra + cpu_neg(cpu)->icount_decr.u16.low;
     sc->diff_clk += icount_to_ns(sc->last_cpu_icount - cpu_icount);
     sc->last_cpu_icount = cpu_icount;
 
@@ -125,7 +124,7 @@ static void init_delay_params(SyncClocks *sc, CPUState *cpu)
     sc->realtime_clock = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL_RT);
     sc->diff_clk = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - sc->realtime_clock;
     sc->last_cpu_icount
-        = cpu->icount_extra + cpu->neg.icount_decr.u16.low;
+        = cpu->icount_extra + cpu_neg(cpu)->icount_decr.u16.low;
     if (sc->diff_clk < max_delay) {
         max_delay = sc->diff_clk;
     }
@@ -223,7 +222,7 @@ static TranslationBlock *tb_htable_lookup(CPUState *cpu, vaddr pc,
     struct tb_desc desc;
     uint32_t h;
 
-    desc.env = cpu_env(cpu);
+    desc.env = cpu->env_ptr;
     desc.cs_base = cs_base;
     desc.flags = flags;
     desc.cflags = cflags;
@@ -445,7 +444,7 @@ const void *HELPER(lookup_tb_ptr)(CPUArchState *env)
 static inline TranslationBlock * QEMU_DISABLE_CFI
 cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
 {
-    CPUArchState *env = cpu_env(cpu);
+    CPUArchState *env = cpu->env_ptr;
     uintptr_t ret;
     TranslationBlock *last_tb;
     const void *tb_ptr = itb->tc.ptr;
@@ -456,7 +455,7 @@ cpu_tb_exec(CPUState *cpu, TranslationBlock *itb, int *tb_exit)
 
     qemu_thread_jit_execute();
     ret = tcg_qemu_tb_exec(env, tb_ptr);
-    cpu->neg.can_do_io = true;
+    cpu->can_do_io = 1;
     qemu_plugin_disable_mem_helpers(cpu);
     /*
      * TODO: Delay swapping back to the read-write region of the TB
@@ -566,7 +565,7 @@ static void cpu_exec_longjmp_cleanup(CPUState *cpu)
 
 void cpu_exec_step_atomic(CPUState *cpu)
 {
-    CPUArchState *env = cpu_env(cpu);
+    CPUArchState *env = cpu->env_ptr;
     TranslationBlock *tb;
     vaddr pc;
     uint64_t cs_base;
@@ -718,10 +717,10 @@ static inline bool cpu_handle_exception(CPUState *cpu, int *ret)
     if (cpu->exception_index < 0) {
 #ifndef CONFIG_USER_ONLY
         if (replay_has_exception()
-            && cpu->neg.icount_decr.u16.low + cpu->icount_extra == 0) {
+            && cpu_neg(cpu)->icount_decr.u16.low + cpu->icount_extra == 0) {
             /* Execute just one insn to trigger exception pending in the log */
             cpu->cflags_next_tb = (curr_cflags(cpu) & ~CF_USE_ICOUNT)
-                | CF_LAST_IO | CF_NOIRQ | 1;
+                | CF_NOIRQ | 1;
         }
 #endif
         return false;
@@ -808,7 +807,7 @@ static inline bool cpu_handle_interrupt(CPUState *cpu,
      * Ensure zeroing happens before reading cpu->exit_request or
      * cpu->interrupt_request (see also smp_wmb in cpu_exit())
      */
-    qatomic_set_mb(&cpu->neg.icount_decr.u16.high, 0);
+    qatomic_set_mb(&cpu_neg(cpu)->icount_decr.u16.high, 0);
 
     if (unlikely(qatomic_read(&cpu->interrupt_request))) {
         int interrupt_request;
@@ -899,7 +898,7 @@ static inline bool cpu_handle_interrupt(CPUState *cpu,
     if (unlikely(qatomic_read(&cpu->exit_request))
         || (icount_enabled()
             && (cpu->cflags_next_tb == -1 || cpu->cflags_next_tb & CF_USE_ICOUNT)
-            && cpu->neg.icount_decr.u16.low + cpu->icount_extra == 0)) {
+            && cpu_neg(cpu)->icount_decr.u16.low + cpu->icount_extra == 0)) {
         qatomic_set(&cpu->exit_request, 0);
         if (cpu->exception_index == -1) {
             cpu->exception_index = EXCP_INTERRUPT;
@@ -924,7 +923,7 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
     }
 
     *last_tb = NULL;
-    insns_left = qatomic_read(&cpu->neg.icount_decr.u32);
+    insns_left = qatomic_read(&cpu_neg(cpu)->icount_decr.u32);
     if (insns_left < 0) {
         /* Something asked us to stop executing chained TBs; just
          * continue round the main loop. Whatever requested the exit
@@ -943,7 +942,7 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
     icount_update(cpu);
     /* Refill decrementer and continue execution.  */
     insns_left = MIN(0xffff, cpu->icount_budget);
-    cpu->neg.icount_decr.u16.low = insns_left;
+    cpu_neg(cpu)->icount_decr.u16.low = insns_left;
     cpu->icount_extra = cpu->icount_budget - insns_left;
 
     /*
@@ -960,25 +959,25 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 }
 
 /* main execution loop */
-
+#include "qapi/qapi-commands-machine.h"
+#include "checkpoint/serializer.h"
+long long int instcount = 0;
+bool checkpoint = false;
 static int __attribute__((noinline))
 cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 {
     int ret;
-
     /* if an exception is pending, we execute it here */
     while (!cpu_handle_exception(cpu, &ret)) {
         TranslationBlock *last_tb = NULL;
         int tb_exit = 0;
-
         while (!cpu_handle_interrupt(cpu, &last_tb)) {
             TranslationBlock *tb;
             vaddr pc;
             uint64_t cs_base;
             uint32_t flags, cflags;
-
-            cpu_get_tb_cpu_state(cpu_env(cpu), &pc, &cs_base, &flags);
-
+            cpu_get_tb_cpu_state(cpu->env_ptr, &pc, &cs_base, &flags);
+            
             /*
              * When requested, use an exact setting for cflags for the next
              * execution.  This is used for icount, precise smc, and stop-
@@ -1043,6 +1042,17 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(sc, cpu);
+
+            instcount++;
+            if(instcount > 120000 ){
+                if(!checkpoint){
+                    MemoryInfo * info = qmp_query_memory_size_summary(NULL);
+                    serializeRegs();
+                    qmp_gzpmemsave(0x80000000, info->base_memory, "bbl.gz", NULL);    
+                    checkpoint = true;
+                }
+                instcount = 0;
+            }
         }
     }
     return ret;
@@ -1089,7 +1099,7 @@ int cpu_exec(CPUState *cpu)
     return ret;
 }
 
-bool tcg_exec_realizefn(CPUState *cpu, Error **errp)
+void tcg_exec_realizefn(CPUState *cpu, Error **errp)
 {
     static bool tcg_target_initialized;
     CPUClass *cc = CPU_GET_CLASS(cpu);
@@ -1105,8 +1115,6 @@ bool tcg_exec_realizefn(CPUState *cpu, Error **errp)
     tcg_iommu_init_notifier_list(cpu);
 #endif /* !CONFIG_USER_ONLY */
     /* qemu_plugin_vcpu_init_hook delayed until cpu_index assigned. */
-
-    return true;
 }
 
 /* undo the initializations in reverse order */

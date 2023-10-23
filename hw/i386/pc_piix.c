@@ -46,7 +46,7 @@
 #include "hw/ide/piix.h"
 #include "hw/irq.h"
 #include "sysemu/kvm.h"
-#include "hw/i386/kvm/clock.h"
+#include "hw/kvm/clock.h"
 #include "hw/sysbus.h"
 #include "hw/i2c/smbus_eeprom.h"
 #include "exec/memory.h"
@@ -69,7 +69,6 @@
 #include "hw/mem/nvdimm.h"
 #include "hw/i386/acpi-build.h"
 #include "kvm/kvm-cpu.h"
-#include "target/i386/cpu.h"
 
 #define MAX_IDE_BUS 2
 #define XEN_IOAPIC_NUM_PIRQS 128ULL
@@ -193,7 +192,7 @@ static void pc_init1(MachineState *machine,
     pc_machine_init_sgx_epc(pcms);
     x86_cpus_init(x86ms, pcmc->default_cpu_version);
 
-    if (kvm_enabled() && pcmc->kvmclock_enabled) {
+    if (pcmc->kvmclock_enabled) {
         kvmclock_create(pcmc->kvmclock_create_always);
     }
 
@@ -423,6 +422,27 @@ static void pc_compat_2_0_fn(MachineState *machine)
     pc_compat_2_1_fn(machine);
 }
 
+static void pc_compat_1_7_fn(MachineState *machine)
+{
+    pc_compat_2_0_fn(machine);
+    x86_cpu_change_kvm_default("x2apic", NULL);
+}
+
+static void pc_compat_1_6_fn(MachineState *machine)
+{
+    pc_compat_1_7_fn(machine);
+}
+
+static void pc_compat_1_5_fn(MachineState *machine)
+{
+    pc_compat_1_6_fn(machine);
+}
+
+static void pc_compat_1_4_fn(MachineState *machine)
+{
+    pc_compat_1_5_fn(machine);
+}
+
 #ifdef CONFIG_ISAPC
 static void pc_init_isa(MachineState *machine)
 {
@@ -484,27 +504,11 @@ static void pc_i440fx_machine_options(MachineClass *m)
     machine_class_allow_dynamic_sysbus_dev(m, TYPE_VMBUS_BRIDGE);
 }
 
-static void pc_i440fx_8_2_machine_options(MachineClass *m)
+static void pc_i440fx_8_1_machine_options(MachineClass *m)
 {
     pc_i440fx_machine_options(m);
     m->alias = "pc";
     m->is_default = true;
-}
-
-DEFINE_I440FX_MACHINE(v8_2, "pc-i440fx-8.2", NULL,
-                      pc_i440fx_8_2_machine_options);
-
-static void pc_i440fx_8_1_machine_options(MachineClass *m)
-{
-    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
-
-    pc_i440fx_8_2_machine_options(m);
-    m->alias = NULL;
-    m->is_default = false;
-    pcmc->broken_32bit_mem_addr_check = true;
-
-    compat_props_add(m->compat_props, hw_compat_8_1, hw_compat_8_1_len);
-    compat_props_add(m->compat_props, pc_compat_8_1, pc_compat_8_1_len);
 }
 
 DEFINE_I440FX_MACHINE(v8_1, "pc-i440fx-8.1", NULL,
@@ -515,6 +519,8 @@ static void pc_i440fx_8_0_machine_options(MachineClass *m)
     PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
 
     pc_i440fx_8_1_machine_options(m);
+    m->alias = NULL;
+    m->is_default = false;
     compat_props_add(m->compat_props, hw_compat_8_0, hw_compat_8_0_len);
     compat_props_add(m->compat_props, pc_compat_8_0, pc_compat_8_0_len);
 
@@ -858,6 +864,58 @@ static void pc_i440fx_2_0_machine_options(MachineClass *m)
 
 DEFINE_I440FX_MACHINE(v2_0, "pc-i440fx-2.0", pc_compat_2_0_fn,
                       pc_i440fx_2_0_machine_options);
+
+static void pc_i440fx_1_7_machine_options(MachineClass *m)
+{
+    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+
+    pc_i440fx_2_0_machine_options(m);
+    m->hw_version = "1.7.0";
+    m->default_machine_opts = NULL;
+    m->option_rom_has_mr = true;
+    m->deprecation_reason = "old and unattended - use a newer version instead";
+    compat_props_add(m->compat_props, pc_compat_1_7, pc_compat_1_7_len);
+    pcmc->smbios_defaults = false;
+    pcmc->gigabyte_align = false;
+    pcmc->legacy_acpi_table_size = 6414;
+}
+
+DEFINE_I440FX_MACHINE(v1_7, "pc-i440fx-1.7", pc_compat_1_7_fn,
+                      pc_i440fx_1_7_machine_options);
+
+static void pc_i440fx_1_6_machine_options(MachineClass *m)
+{
+    PCMachineClass *pcmc = PC_MACHINE_CLASS(m);
+
+    pc_i440fx_1_7_machine_options(m);
+    m->hw_version = "1.6.0";
+    m->rom_file_has_mr = false;
+    compat_props_add(m->compat_props, pc_compat_1_6, pc_compat_1_6_len);
+    pcmc->has_acpi_build = false;
+}
+
+DEFINE_I440FX_MACHINE(v1_6, "pc-i440fx-1.6", pc_compat_1_6_fn,
+                      pc_i440fx_1_6_machine_options);
+
+static void pc_i440fx_1_5_machine_options(MachineClass *m)
+{
+    pc_i440fx_1_6_machine_options(m);
+    m->hw_version = "1.5.0";
+    compat_props_add(m->compat_props, pc_compat_1_5, pc_compat_1_5_len);
+}
+
+DEFINE_I440FX_MACHINE(v1_5, "pc-i440fx-1.5", pc_compat_1_5_fn,
+                      pc_i440fx_1_5_machine_options);
+
+static void pc_i440fx_1_4_machine_options(MachineClass *m)
+{
+    pc_i440fx_1_5_machine_options(m);
+    m->hw_version = "1.4.0";
+    compat_props_add(m->compat_props, pc_compat_1_4, pc_compat_1_4_len);
+}
+
+DEFINE_I440FX_MACHINE(v1_4, "pc-i440fx-1.4", pc_compat_1_4_fn,
+                      pc_i440fx_1_4_machine_options);
 
 #ifdef CONFIG_ISAPC
 static void isapc_machine_options(MachineClass *m)

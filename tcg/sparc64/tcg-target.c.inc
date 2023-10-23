@@ -322,7 +322,7 @@ static bool patch_reloc(tcg_insn_unit *src_rw, int type,
 }
 
 /* test if a constant matches the constraint */
-static bool tcg_target_const_match(int64_t val, TCGType type, int ct, int vece)
+static bool tcg_target_const_match(int64_t val, TCGType type, int ct)
 {
     if (ct & TCG_CT_CONST) {
         return 1;
@@ -529,6 +529,11 @@ static void tcg_out_extu_i32_i64(TCGContext *s, TCGReg rd, TCGReg rs)
     tcg_out_ext32u(s, rd, rs);
 }
 
+static void tcg_out_extrl_i64_i32(TCGContext *s, TCGReg rd, TCGReg rs)
+{
+    tcg_out_mov(s, TCG_TYPE_I32, rd, rs);
+}
+
 static bool tcg_out_xchg(TCGContext *s, TCGType type, TCGReg r1, TCGReg r2)
 {
     return false;
@@ -715,7 +720,7 @@ static void tcg_out_movcond_i64(TCGContext *s, TCGCond cond, TCGReg ret,
 }
 
 static void tcg_out_setcond_i32(TCGContext *s, TCGCond cond, TCGReg ret,
-                                TCGReg c1, int32_t c2, int c2const, bool neg)
+                                TCGReg c1, int32_t c2, int c2const)
 {
     /* For 32-bit comparisons, we can play games with ADDC/SUBC.  */
     switch (cond) {
@@ -755,34 +760,22 @@ static void tcg_out_setcond_i32(TCGContext *s, TCGCond cond, TCGReg ret,
     default:
         tcg_out_cmp(s, c1, c2, c2const);
         tcg_out_movi_s13(s, ret, 0);
-        tcg_out_movcc(s, cond, MOVCC_ICC, ret, neg ? -1 : 1, 1);
+        tcg_out_movcc(s, cond, MOVCC_ICC, ret, 1, 1);
         return;
     }
 
     tcg_out_cmp(s, c1, c2, c2const);
     if (cond == TCG_COND_LTU) {
-        if (neg) {
-            /* 0 - 0 - C = -C = (C ? -1 : 0) */
-            tcg_out_arithi(s, ret, TCG_REG_G0, 0, ARITH_SUBC);
-        } else {
-            /* 0 + 0 + C =  C = (C ? 1 : 0) */
-            tcg_out_arithi(s, ret, TCG_REG_G0, 0, ARITH_ADDC);
-        }
+        tcg_out_arithi(s, ret, TCG_REG_G0, 0, ARITH_ADDC);
     } else {
-        if (neg) {
-            /* 0 + -1 + C = C - 1 = (C ? 0 : -1) */
-            tcg_out_arithi(s, ret, TCG_REG_G0, -1, ARITH_ADDC);
-        } else {
-            /* 0 - -1 - C = 1 - C = (C ? 0 : 1) */
-            tcg_out_arithi(s, ret, TCG_REG_G0, -1, ARITH_SUBC);
-        }
+        tcg_out_arithi(s, ret, TCG_REG_G0, -1, ARITH_SUBC);
     }
 }
 
 static void tcg_out_setcond_i64(TCGContext *s, TCGCond cond, TCGReg ret,
-                                TCGReg c1, int32_t c2, int c2const, bool neg)
+                                TCGReg c1, int32_t c2, int c2const)
 {
-    if (use_vis3_instructions && !neg) {
+    if (use_vis3_instructions) {
         switch (cond) {
         case TCG_COND_NE:
             if (c2 != 0) {
@@ -803,11 +796,11 @@ static void tcg_out_setcond_i64(TCGContext *s, TCGCond cond, TCGReg ret,
        if the input does not overlap the output.  */
     if (c2 == 0 && !is_unsigned_cond(cond) && c1 != ret) {
         tcg_out_movi_s13(s, ret, 0);
-        tcg_out_movr(s, cond, ret, c1, neg ? -1 : 1, 1);
+        tcg_out_movr(s, cond, ret, c1, 1, 1);
     } else {
         tcg_out_cmp(s, c1, c2, c2const);
         tcg_out_movi_s13(s, ret, 0);
-        tcg_out_movcc(s, cond, MOVCC_XCC, ret, neg ? -1 : 1, 1);
+        tcg_out_movcc(s, cond, MOVCC_XCC, ret, 1, 1);
     }
 }
 
@@ -962,11 +955,6 @@ static void tcg_target_qemu_prologue(TCGContext *s)
     tcg_out_movi_s13(s, TCG_REG_O0, 0);
 }
 
-static void tcg_out_tb_start(TCGContext *s)
-{
-    /* nothing to do */
-}
-
 static void tcg_out_nop_fill(tcg_insn_unit *p, int count)
 {
     int i;
@@ -1033,8 +1021,8 @@ bool tcg_target_has_memory_bswap(MemOp memop)
 #define MIN_TLB_MASK_TABLE_OFS  -(1 << 12)
 
 /*
- * For system-mode, perform the TLB load and compare.
- * For user-mode, perform any required alignment tests.
+ * For softmmu, perform the TLB load and compare.
+ * For useronly, perform any required alignment tests.
  * In both cases, return a TCGLabelQemuLdst structure if the slow path
  * is required and fill in @h with the host address for the fast path.
  */
@@ -1367,10 +1355,7 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_brcond_i32(s, a2, a0, a1, const_args[1], arg_label(args[3]));
         break;
     case INDEX_op_setcond_i32:
-        tcg_out_setcond_i32(s, args[3], a0, a1, a2, c2, false);
-        break;
-    case INDEX_op_negsetcond_i32:
-        tcg_out_setcond_i32(s, args[3], a0, a1, a2, c2, true);
+        tcg_out_setcond_i32(s, args[3], a0, a1, a2, c2);
         break;
     case INDEX_op_movcond_i32:
         tcg_out_movcond_i32(s, args[5], a0, a1, a2, c2, args[3], const_args[3]);
@@ -1444,15 +1429,15 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
     case INDEX_op_divu_i64:
         c = ARITH_UDIVX;
         goto gen_arith;
+    case INDEX_op_extrh_i64_i32:
+        tcg_out_arithi(s, a0, a1, 32, SHIFT_SRLX);
+        break;
 
     case INDEX_op_brcond_i64:
         tcg_out_brcond_i64(s, a2, a0, a1, const_args[1], arg_label(args[3]));
         break;
     case INDEX_op_setcond_i64:
-        tcg_out_setcond_i64(s, args[3], a0, a1, a2, c2, false);
-        break;
-    case INDEX_op_negsetcond_i64:
-        tcg_out_setcond_i64(s, args[3], a0, a1, a2, c2, true);
+        tcg_out_setcond_i64(s, args[3], a0, a1, a2, c2);
         break;
     case INDEX_op_movcond_i64:
         tcg_out_movcond_i64(s, args[5], a0, a1, a2, c2, args[3], const_args[3]);
@@ -1498,6 +1483,7 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
     case INDEX_op_ext32u_i64:
     case INDEX_op_ext_i32_i64:
     case INDEX_op_extu_i32_i64:
+    case INDEX_op_extrl_i64_i32:
     default:
         g_assert_not_reached();
     }
@@ -1529,6 +1515,8 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode op)
     case INDEX_op_ext32u_i64:
     case INDEX_op_ext_i32_i64:
     case INDEX_op_extu_i32_i64:
+    case INDEX_op_extrl_i64_i32:
+    case INDEX_op_extrh_i64_i32:
     case INDEX_op_qemu_ld_a32_i32:
     case INDEX_op_qemu_ld_a64_i32:
     case INDEX_op_qemu_ld_a32_i64:
@@ -1576,8 +1564,6 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode op)
     case INDEX_op_sar_i64:
     case INDEX_op_setcond_i32:
     case INDEX_op_setcond_i64:
-    case INDEX_op_negsetcond_i32:
-    case INDEX_op_negsetcond_i64:
         return C_O1_I2(r, rZ, rJ);
 
     case INDEX_op_brcond_i32:

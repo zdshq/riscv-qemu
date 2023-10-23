@@ -353,7 +353,7 @@ static bool patch_reloc(tcg_insn_unit *code_ptr, int type,
 #define ALL_VECTOR_REGS   0xffff0000u
 
 /*
- * r0-r3 will be overwritten when reading the tlb entry (system-mode only);
+ * r0-r3 will be overwritten when reading the tlb entry (softmmu only);
  * r14 will be overwritten by the BLNE branching to the slow path.
  */
 #ifdef CONFIG_SOFTMMU
@@ -509,7 +509,7 @@ static bool is_shimm1632(uint32_t v32, int *cmode, int *imm8)
  * mov operand2:     values represented with x << (2 * y), x < 0x100
  * add, sub, eor...: ditto
  */
-static bool tcg_target_const_match(int64_t val, TCGType type, int ct, int vece)
+static bool tcg_target_const_match(int64_t val, TCGType type, int ct)
 {
     if (ct & TCG_CT_CONST) {
         return 1;
@@ -1216,11 +1216,9 @@ static TCGCond tcg_out_cmp2(TCGContext *s, const TCGArg *args,
     case TCG_COND_LEU:
     case TCG_COND_GTU:
     case TCG_COND_GEU:
-        /*
-         * We perform a conditional comparison.  If the high half is
-         * equal, then overwrite the flags with the comparison of the
-         * low half.  The resulting flags cover the whole.
-         */
+        /* We perform a conditional comparision.  If the high half is
+           equal, then overwrite the flags with the comparison of the
+           low half.  The resulting flags cover the whole.  */
         tcg_out_dat_rI(s, COND_AL, ARITH_CMP, 0, ah, bh, const_bh);
         tcg_out_dat_rI(s, COND_EQ, ARITH_CMP, 0, al, bl, const_bl);
         return cond;
@@ -1252,7 +1250,7 @@ static TCGCond tcg_out_cmp2(TCGContext *s, const TCGArg *args,
 
 /*
  * Note that TCGReg references Q-registers.
- * Q-regno = 2 * D-regno, so shift left by 1 while inserting.
+ * Q-regno = 2 * D-regno, so shift left by 1 whlie inserting.
  */
 static uint32_t encode_vd(TCGReg rd)
 {
@@ -1420,7 +1418,7 @@ static TCGLabelQemuLdst *prepare_host_addr(TCGContext *s, HostAddress *h,
     ldst->addrlo_reg = addrlo;
     ldst->addrhi_reg = addrhi;
 
-    /* Load cpu->neg.tlb.f[mmu_idx].{mask,table} into {r0,r1}.  */
+    /* Load env_tlb(env)->f[mmu_idx].{mask,table} into {r0,r1}.  */
     QEMU_BUILD_BUG_ON(offsetof(CPUTLBDescFast, mask) != 0);
     QEMU_BUILD_BUG_ON(offsetof(CPUTLBDescFast, table) != 4);
     tcg_out_ldrd_8(s, COND_AL, TCG_REG_R0, TCG_AREG0, fast_off);
@@ -1977,14 +1975,6 @@ static void tcg_out_op(TCGContext *s, TCGOpcode opc,
         tcg_out_dat_imm(s, tcg_cond_to_arm_cond[tcg_invert_cond(args[3])],
                         ARITH_MOV, args[0], 0, 0);
         break;
-    case INDEX_op_negsetcond_i32:
-        tcg_out_dat_rIN(s, COND_AL, ARITH_CMP, ARITH_CMN, 0,
-                        args[1], args[2], const_args[2]);
-        tcg_out_dat_imm(s, tcg_cond_to_arm_cond[args[3]],
-                        ARITH_MVN, args[0], 0, 0);
-        tcg_out_dat_imm(s, tcg_cond_to_arm_cond[tcg_invert_cond(args[3])],
-                        ARITH_MOV, args[0], 0, 0);
-        break;
 
     case INDEX_op_brcond2_i32:
         c = tcg_out_cmp2(s, args, const_args);
@@ -2122,7 +2112,6 @@ static TCGConstraintSetIndex tcg_target_op_def(TCGOpcode op)
     case INDEX_op_add_i32:
     case INDEX_op_sub_i32:
     case INDEX_op_setcond_i32:
-    case INDEX_op_negsetcond_i32:
         return C_O1_I2(r, r, rIN);
 
     case INDEX_op_and_i32:
@@ -2960,11 +2949,6 @@ static void tcg_out_epilogue(TCGContext *s)
                   (1 << TCG_REG_R4) | (1 << TCG_REG_R5) | (1 << TCG_REG_R6) |
                   (1 << TCG_REG_R7) | (1 << TCG_REG_R8) | (1 << TCG_REG_R9) |
                   (1 << TCG_REG_R10) | (1 << TCG_REG_R11) | (1 << TCG_REG_PC));
-}
-
-static void tcg_out_tb_start(TCGContext *s)
-{
-    /* nothing to do */
 }
 
 typedef struct {

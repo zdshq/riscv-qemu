@@ -114,7 +114,6 @@ extern bool pci_available;
 #define PCI_DEVICE_ID_REDHAT_NVME        0x0010
 #define PCI_DEVICE_ID_REDHAT_PVPANIC     0x0011
 #define PCI_DEVICE_ID_REDHAT_ACPI_ERST   0x0012
-#define PCI_DEVICE_ID_REDHAT_UFS         0x0013
 #define PCI_DEVICE_ID_REDHAT_QXL         0x0100
 
 #define FMT_PCIBUS                      PRIx64
@@ -279,10 +278,12 @@ bool pci_bus_is_express(const PCIBus *bus);
 
 void pci_root_bus_init(PCIBus *bus, size_t bus_size, DeviceState *parent,
                        const char *name,
-                       MemoryRegion *mem, MemoryRegion *io,
+                       MemoryRegion *address_space_mem,
+                       MemoryRegion *address_space_io,
                        uint8_t devfn_min, const char *typename);
 PCIBus *pci_root_bus_new(DeviceState *parent, const char *name,
-                         MemoryRegion *mem, MemoryRegion *io,
+                         MemoryRegion *address_space_mem,
+                         MemoryRegion *address_space_io,
                          uint8_t devfn_min, const char *typename);
 void pci_root_bus_cleanup(PCIBus *bus);
 void pci_bus_irqs(PCIBus *bus, pci_set_irq_fn set_irq,
@@ -302,7 +303,8 @@ int pci_swizzle_map_irq_fn(PCIDevice *pci_dev, int pin);
 PCIBus *pci_register_root_bus(DeviceState *parent, const char *name,
                               pci_set_irq_fn set_irq, pci_map_irq_fn map_irq,
                               void *irq_opaque,
-                              MemoryRegion *mem, MemoryRegion *io,
+                              MemoryRegion *address_space_mem,
+                              MemoryRegion *address_space_io,
                               uint8_t devfn_min, int nirq,
                               const char *typename);
 void pci_unregister_root_bus(PCIBus *bus);

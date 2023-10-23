@@ -272,7 +272,6 @@ static void vmdk_free_extents(BlockDriverState *bs)
     BDRVVmdkState *s = bs->opaque;
     VmdkExtent *e;
 
-    bdrv_graph_wrlock(NULL);
     for (i = 0; i < s->num_extents; i++) {
         e = &s->extents[i];
         g_free(e->l1_table);
@@ -283,8 +282,6 @@ static void vmdk_free_extents(BlockDriverState *bs)
             bdrv_unref_child(bs, e->file);
         }
     }
-    bdrv_graph_wrunlock();
-
     g_free(s->extents);
 }
 
@@ -578,8 +575,8 @@ static int vmdk_add_extent(BlockDriverState *bs,
     return 0;
 }
 
-static int GRAPH_RDLOCK
-vmdk_init_tables(BlockDriverState *bs, VmdkExtent *extent, Error **errp)
+static int vmdk_init_tables(BlockDriverState *bs, VmdkExtent *extent,
+                            Error **errp)
 {
     int ret;
     size_t l1_size;
@@ -641,9 +638,9 @@ vmdk_init_tables(BlockDriverState *bs, VmdkExtent *extent, Error **errp)
     return ret;
 }
 
-static int GRAPH_RDLOCK
-vmdk_open_vmfs_sparse(BlockDriverState *bs, BdrvChild *file, int flags,
-                      Error **errp)
+static int vmdk_open_vmfs_sparse(BlockDriverState *bs,
+                                 BdrvChild *file,
+                                 int flags, Error **errp)
 {
     int ret;
     uint32_t magic;
@@ -797,9 +794,9 @@ static int check_se_sparse_volatile_header(VMDKSESparseVolatileHeader *header,
     return 0;
 }
 
-static int GRAPH_RDLOCK
-vmdk_open_se_sparse(BlockDriverState *bs, BdrvChild *file, int flags,
-                    Error **errp)
+static int vmdk_open_se_sparse(BlockDriverState *bs,
+                               BdrvChild *file,
+                               int flags, Error **errp)
 {
     int ret;
     VMDKSESparseConstHeader const_header;
@@ -913,9 +910,9 @@ static char *vmdk_read_desc(BdrvChild *file, uint64_t desc_offset, Error **errp)
     return buf;
 }
 
-static int GRAPH_RDLOCK
-vmdk_open_vmdk4(BlockDriverState *bs, BdrvChild *file, int flags,
-                QDict *options, Error **errp)
+static int vmdk_open_vmdk4(BlockDriverState *bs,
+                           BdrvChild *file,
+                           int flags, QDict *options, Error **errp)
 {
     int ret;
     uint32_t magic;
@@ -1095,9 +1092,8 @@ static int vmdk_parse_description(const char *desc, const char *opt_name,
 }
 
 /* Open an extent file and append to bs array */
-static int GRAPH_RDLOCK
-vmdk_open_sparse(BlockDriverState *bs, BdrvChild *file, int flags,
-                 char *buf, QDict *options, Error **errp)
+static int vmdk_open_sparse(BlockDriverState *bs, BdrvChild *file, int flags,
+                            char *buf, QDict *options, Error **errp)
 {
     uint32_t magic;
 
@@ -1124,9 +1120,8 @@ static const char *next_line(const char *s)
     return s;
 }
 
-static int GRAPH_RDLOCK
-vmdk_parse_extents(const char *desc, BlockDriverState *bs, QDict *options,
-                   Error **errp)
+static int vmdk_parse_extents(const char *desc, BlockDriverState *bs,
+                              QDict *options, Error **errp)
 {
     int ret;
     int matches;
@@ -1144,8 +1139,6 @@ vmdk_parse_extents(const char *desc, BlockDriverState *bs, QDict *options,
     VmdkExtent *extent = NULL;
     char extent_opt_prefix[32];
     Error *local_err = NULL;
-
-    GLOBAL_STATE_CODE();
 
     for (p = desc; *p; p = next_line(p)) {
         /* parse extent line in one of below formats:
@@ -1214,7 +1207,7 @@ vmdk_parse_extents(const char *desc, BlockDriverState *bs, QDict *options,
                                       bs, &child_of_bds, extent_role, false,
                                       &local_err);
         g_free(extent_path);
-        if (!extent_file) {
+        if (local_err) {
             error_propagate(errp, local_err);
             ret = -EINVAL;
             goto out;
@@ -1227,11 +1220,7 @@ vmdk_parse_extents(const char *desc, BlockDriverState *bs, QDict *options,
             ret = vmdk_add_extent(bs, extent_file, true, sectors,
                             0, 0, 0, 0, 0, &extent, errp);
             if (ret < 0) {
-                bdrv_graph_rdunlock_main_loop();
-                bdrv_graph_wrlock(NULL);
                 bdrv_unref_child(bs, extent_file);
-                bdrv_graph_wrunlock();
-                bdrv_graph_rdlock_main_loop();
                 goto out;
             }
             extent->flat_start_offset = flat_offset << 9;
@@ -1246,32 +1235,20 @@ vmdk_parse_extents(const char *desc, BlockDriverState *bs, QDict *options,
             }
             g_free(buf);
             if (ret) {
-                bdrv_graph_rdunlock_main_loop();
-                bdrv_graph_wrlock(NULL);
                 bdrv_unref_child(bs, extent_file);
-                bdrv_graph_wrunlock();
-                bdrv_graph_rdlock_main_loop();
                 goto out;
             }
             extent = &s->extents[s->num_extents - 1];
         } else if (!strcmp(type, "SESPARSE")) {
             ret = vmdk_open_se_sparse(bs, extent_file, bs->open_flags, errp);
             if (ret) {
-                bdrv_graph_rdunlock_main_loop();
-                bdrv_graph_wrlock(NULL);
                 bdrv_unref_child(bs, extent_file);
-                bdrv_graph_wrunlock();
-                bdrv_graph_rdlock_main_loop();
                 goto out;
             }
             extent = &s->extents[s->num_extents - 1];
         } else {
             error_setg(errp, "Unsupported extent type '%s'", type);
-            bdrv_graph_rdunlock_main_loop();
-            bdrv_graph_wrlock(NULL);
             bdrv_unref_child(bs, extent_file);
-            bdrv_graph_wrunlock();
-            bdrv_graph_rdlock_main_loop();
             ret = -ENOTSUP;
             goto out;
         }
@@ -1295,9 +1272,8 @@ out:
     return ret;
 }
 
-static int GRAPH_RDLOCK
-vmdk_open_desc_file(BlockDriverState *bs, int flags, char *buf, QDict *options,
-                    Error **errp)
+static int vmdk_open_desc_file(BlockDriverState *bs, int flags, char *buf,
+                               QDict *options, Error **errp)
 {
     int ret;
     char ct[128];
@@ -1332,8 +1308,6 @@ static int vmdk_open(BlockDriverState *bs, QDict *options, int flags,
     int ret;
     BDRVVmdkState *s = bs->opaque;
     uint32_t magic;
-
-    GRAPH_RDLOCK_GUARD_MAINLOOP();
 
     ret = bdrv_open_file_child(NULL, options, "file", bs, errp);
     if (ret < 0) {
@@ -1386,8 +1360,9 @@ static int vmdk_open(BlockDriverState *bs, QDict *options, int flags,
     error_setg(&s->migration_blocker, "The vmdk format used by node '%s' "
                "does not support live migration",
                bdrv_get_device_or_node_name(bs));
-    ret = migrate_add_blocker(&s->migration_blocker, errp);
+    ret = migrate_add_blocker(s->migration_blocker, errp);
     if (ret < 0) {
+        error_free(s->migration_blocker);
         goto fail;
     }
 
@@ -1795,8 +1770,6 @@ vmdk_co_block_status(BlockDriverState *bs, bool want_zero,
             if (extent->flat) {
                 ret |= BDRV_BLOCK_RECURSE;
             }
-        } else {
-            ret |= BDRV_BLOCK_COMPRESSED;
         }
         *file = extent->file->bs;
         break;
@@ -2866,7 +2839,8 @@ static void vmdk_close(BlockDriverState *bs)
     vmdk_free_extents(bs);
     g_free(s->create_type);
 
-    migrate_del_blocker(&s->migration_blocker);
+    migrate_del_blocker(s->migration_blocker);
+    error_free(s->migration_blocker);
 }
 
 static int64_t coroutine_fn GRAPH_RDLOCK
@@ -2911,7 +2885,7 @@ static int vmdk_has_zero_init(BlockDriverState *bs)
     return 1;
 }
 
-static VmdkExtentInfo * GRAPH_RDLOCK vmdk_get_extent_info(VmdkExtent *extent)
+static VmdkExtentInfo *vmdk_get_extent_info(VmdkExtent *extent)
 {
     VmdkExtentInfo *info = g_new0(VmdkExtentInfo, 1);
 
@@ -2988,8 +2962,8 @@ vmdk_co_check(BlockDriverState *bs, BdrvCheckResult *result, BdrvCheckMode fix)
     return ret;
 }
 
-static ImageInfoSpecific * GRAPH_RDLOCK
-vmdk_get_specific_info(BlockDriverState *bs, Error **errp)
+static ImageInfoSpecific *vmdk_get_specific_info(BlockDriverState *bs,
+                                                 Error **errp)
 {
     int i;
     BDRVVmdkState *s = bs->opaque;

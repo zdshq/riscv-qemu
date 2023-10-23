@@ -93,13 +93,13 @@ static gboolean uart_transmit(void *do_not_use, GIOCondition cond, void *opaque)
              */
             goto buffer_drained;
         }
-        return G_SOURCE_REMOVE;
+        return FALSE;
     }
 
 buffer_drained:
     s->reg[R_UART_TXDRDY] = 1;
     s->pending_tx_byte = false;
-    return G_SOURCE_REMOVE;
+    return FALSE;
 }
 
 static void uart_cancel_transmit(NRF51UARTState *s)

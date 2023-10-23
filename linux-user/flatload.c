@@ -755,15 +755,15 @@ int load_flt_binary(struct linux_binprm *bprm, struct image_info *info)
     /* Update data segment pointers for all libraries */
     for (i=0; i<MAX_SHARED_LIBS; i++) {
         if (libinfo[i].loaded) {
-            abi_ulong seg;
-            seg = libinfo[i].start_data;
+            abi_ulong p;
+            p = libinfo[i].start_data;
             for (j=0; j<MAX_SHARED_LIBS; j++) {
-                seg -= 4;
+                p -= 4;
                 /* FIXME - handle put_user() failures */
                 if (put_user_ual(libinfo[j].loaded
                                  ? libinfo[j].start_data
                                  : UNLOADED_LIB,
-                                 seg))
+                                 p))
                     return -EFAULT;
             }
         }
@@ -780,7 +780,7 @@ int load_flt_binary(struct linux_binprm *bprm, struct image_info *info)
     /* Enforce final stack alignment of 16 bytes.  This is sufficient
        for all current targets, and excess alignment is harmless.  */
     stack_len = bprm->envc + bprm->argc + 2;
-    stack_len += flat_argvp_envp_on_stack() ? 2 : 0; /* argv, argp */
+    stack_len += flat_argvp_envp_on_stack() ? 2 : 0; /* arvg, argp */
     stack_len += 1; /* argc */
     stack_len *= sizeof(abi_ulong);
     sp -= (sp - stack_len) & 15;

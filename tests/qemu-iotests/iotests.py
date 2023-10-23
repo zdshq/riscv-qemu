@@ -38,7 +38,7 @@ import unittest
 from contextlib import contextmanager
 
 from qemu.machine import qtest
-from qemu.qmp.legacy import QMPMessage, QMPReturnValue, QEMUMonitorProtocol
+from qemu.qmp.legacy import QMPMessage, QEMUMonitorProtocol
 from qemu.utils import VerboseProcessError
 
 # Use this logger for logging messages directly from the iotests module
@@ -460,16 +460,11 @@ class QemuStorageDaemon:
     def qmp(self, cmd: str, args: Optional[Dict[str, object]] = None) \
             -> QMPMessage:
         assert self._qmp is not None
-        return self._qmp.cmd_raw(cmd, args)
+        return self._qmp.cmd(cmd, args)
 
     def get_qmp(self) -> QEMUMonitorProtocol:
         assert self._qmp is not None
         return self._qmp
-
-    def cmd(self, cmd: str, args: Optional[Dict[str, object]] = None) \
-            -> QMPReturnValue:
-        assert self._qmp is not None
-        return self._qmp.cmd(cmd, **(args or {}))
 
     def stop(self, kill_signal=15):
         self._p.send_signal(kill_signal)
@@ -828,7 +823,7 @@ class VM(qtest.QEMUQtestMachine):
         super().__init__(qemu_prog, qemu_opts, wrapper=wrapper,
                          name=name,
                          base_temp_dir=test_dir,
-                         qmp_timer=timer)
+                         sock_dir=sock_dir, qmp_timer=timer)
         self._num_drives = 0
 
     def _post_shutdown(self) -> None:
@@ -1252,7 +1247,8 @@ class QMPTestCase(unittest.TestCase):
     def cancel_and_wait(self, drive='drive0', force=False,
                         resume=False, wait=60.0):
         '''Cancel a block job and wait for it to finish, returning the event'''
-        self.vm.cmd('block-job-cancel', device=drive, force=force)
+        result = self.vm.qmp('block-job-cancel', device=drive, force=force)
+        self.assert_qmp(result, 'return', {})
 
         if resume:
             self.vm.resume_drive(drive)
@@ -1314,7 +1310,8 @@ class QMPTestCase(unittest.TestCase):
         if wait_ready:
             self.wait_ready(drive=drive)
 
-        self.vm.cmd('block-job-complete', device=drive)
+        result = self.vm.qmp('block-job-complete', device=drive)
+        self.assert_qmp(result, 'return', {})
 
         event = self.wait_until_completed(drive=drive, error=completion_error)
         self.assertTrue(event['data']['type'] in ['mirror', 'commit'])
@@ -1333,9 +1330,11 @@ class QMPTestCase(unittest.TestCase):
                 assert found
 
     def pause_job(self, job_id='job0', wait=True):
-        self.vm.cmd('block-job-pause', device=job_id)
+        result = self.vm.qmp('block-job-pause', device=job_id)
+        self.assert_qmp(result, 'return', {})
         if wait:
-            self.pause_wait(job_id)
+            return self.pause_wait(job_id)
+        return result
 
     def case_skip(self, reason):
         '''Skip this test case'''

@@ -585,7 +585,7 @@ char *qemu_get_pid_name(pid_t pid)
 
 void *qemu_alloc_stack(size_t *sz)
 {
-    void *ptr;
+    void *ptr, *guardpage;
     int flags;
 #ifdef CONFIG_DEBUG_STACK_USAGE
     void *ptr2;
@@ -618,8 +618,17 @@ void *qemu_alloc_stack(size_t *sz)
         abort();
     }
 
-    /* Stack grows down -- guard page at the bottom. */
-    if (mprotect(ptr, pagesz, PROT_NONE) != 0) {
+#if defined(HOST_IA64)
+    /* separate register stack */
+    guardpage = ptr + (((*sz - pagesz) / 2) & ~pagesz);
+#elif defined(HOST_HPPA)
+    /* stack grows up */
+    guardpage = ptr + *sz - pagesz;
+#else
+    /* stack grows down */
+    guardpage = ptr;
+#endif
+    if (mprotect(guardpage, pagesz, PROT_NONE) != 0) {
         perror("failed to set up stack guard page");
         abort();
     }
@@ -662,7 +671,7 @@ void qemu_free_stack(void *stack, size_t sz)
 
 /*
  * Disable CFI checks.
- * We are going to call a signal handler directly. Such handler may or may not
+ * We are going to call a signal hander directly. Such handler may or may not
  * have been defined in our binary, so there's no guarantee that the pointer
  * used to set the handler is a cfi-valid pointer. Since the handlers are
  * stored in kernel memory, changing the handler to an attacker-defined

@@ -75,7 +75,6 @@ RUN dnf distro-sync -y && \
         libubsan \
         liburing-devel \
         libusbx-devel \
-        libxdp-devel \
         libzstd-devel \
         llvm \
         lttng-ust-devel \
@@ -107,7 +106,6 @@ RUN dnf distro-sync -y && \
         socat \
         spice-protocol \
         spice-server-devel \
-        swtpm \
         systemd-devel \
         systemtap-sdt-devel \
         tar \
@@ -135,8 +133,7 @@ RUN /usr/bin/pip3.8 install \
                     meson==0.63.2 \
                     pillow \
                     sphinx \
-                    sphinx-rtd-theme \
-                    tomli
+                    sphinx-rtd-theme
 
 ENV CCACHE_WRAPPERSDIR "/usr/libexec/ccache-wrappers"
 ENV LANG "en_US.UTF-8"

@@ -1,6 +1,6 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-or-later
- * Host specific cpu identification for x86.
+ * Host specific cpu indentification for x86.
  */
 
 #include "qemu/osdep.h"
@@ -39,7 +39,6 @@ unsigned __attribute__((constructor)) cpuinfo_init(void)
         info |= (c & bit_SSE4_1 ? CPUINFO_SSE4 : 0);
         info |= (c & bit_MOVBE ? CPUINFO_MOVBE : 0);
         info |= (c & bit_POPCNT ? CPUINFO_POPCNT : 0);
-        info |= (c & bit_PCLMUL ? CPUINFO_PCLMUL : 0);
 
         /* Our AES support requires PSHUFB as well. */
         info |= ((c & bit_AES) && (c & bit_SSSE3) ? CPUINFO_AES : 0);
@@ -75,7 +74,7 @@ unsigned __attribute__((constructor)) cpuinfo_init(void)
                  * of their memory operands to be 16-byte aligned.
                  *
                  * AMD has provided an even stronger guarantee that processors
-                 * with AVX provide 16-byte atomicity for all cacheable,
+                 * with AVX provide 16-byte atomicity for all cachable,
                  * naturally aligned single loads and stores, e.g. MOVDQU.
                  *
                  * See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=104688

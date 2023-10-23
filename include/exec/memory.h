@@ -95,7 +95,6 @@ struct ReservedRegion {
  *     relative to the region's address space
  * @readonly: writes to this section are ignored
  * @nonvolatile: this section is non-volatile
- * @unmergeable: this section should not get merged with adjacent sections
  */
 struct MemoryRegionSection {
     Int128 size;
@@ -105,7 +104,6 @@ struct MemoryRegionSection {
     hwaddr offset_within_address_space;
     bool readonly;
     bool nonvolatile;
-    bool unmergeable;
 };
 
 typedef struct IOMMUTLBEntry IOMMUTLBEntry;
@@ -236,12 +234,6 @@ typedef struct IOMMUTLBEvent {
 
 /* RAM is an mmap-ed named file */
 #define RAM_NAMED_FILE (1 << 9)
-
-/* RAM is mmap-ed read-only */
-#define RAM_READONLY (1 << 10)
-
-/* RAM FD is opened read-only */
-#define RAM_READONLY_FD (1 << 11)
 
 static inline void iommu_notifier_init(IOMMUNotifier *n, IOMMUNotify fn,
                                        IOMMUNotifierFlag flags,
@@ -601,9 +593,8 @@ typedef void (*ReplayRamDiscard)(MemoryRegionSection *section, void *opaque);
  * populated (consuming memory), to be used/accessed by the VM.
  *
  * A #RamDiscardManager can only be set for a RAM #MemoryRegion while the
- * #MemoryRegion isn't mapped into an address space yet (either directly
- * or via an alias); it cannot change while the #MemoryRegion is
- * mapped into an address space.
+ * #MemoryRegion isn't mapped yet; it cannot change while the #MemoryRegion is
+ * mapped.
  *
  * The #RamDiscardManager is intended to be used by technologies that are
  * incompatible with discarding of RAM (e.g., VFIO, which may pin all
@@ -775,7 +766,6 @@ struct MemoryRegion {
     bool nonvolatile;
     bool rom_device;
     bool flush_coalesced_mmio;
-    bool unmergeable;
     uint8_t dirty_log_mask;
     bool is_iommu;
     RAMBlock *ram_block;
@@ -1099,7 +1089,6 @@ struct AddressSpace {
     struct FlatView *current_map;
 
     int ioeventfd_nb;
-    int ioeventfd_notifiers;
     struct MemoryRegionIoeventfd *ioeventfds;
     QTAILQ_HEAD(, MemoryListener) listeners;
     QTAILQ_ENTRY(AddressSpace) address_spaces_link;
@@ -1342,10 +1331,10 @@ void memory_region_init_resizeable_ram(MemoryRegion *mr,
  * @align: alignment of the region base address; if 0, the default alignment
  *         (getpagesize()) will be used.
  * @ram_flags: RamBlock flags. Supported flags: RAM_SHARED, RAM_PMEM,
- *             RAM_NORESERVE, RAM_PROTECTED, RAM_NAMED_FILE, RAM_READONLY,
- *             RAM_READONLY_FD
+ *             RAM_NORESERVE,
  * @path: the path in which to allocate the RAM.
  * @offset: offset within the file referenced by path
+ * @readonly: true to open @path for reading, false for read/write.
  * @errp: pointer to Error*, to store an error if it happens.
  *
  * Note that this function does not do anything to cause the data in the
@@ -1359,6 +1348,7 @@ void memory_region_init_ram_from_file(MemoryRegion *mr,
                                       uint32_t ram_flags,
                                       const char *path,
                                       ram_addr_t offset,
+                                      bool readonly,
                                       Error **errp);
 
 /**
@@ -1370,8 +1360,7 @@ void memory_region_init_ram_from_file(MemoryRegion *mr,
  * @name: the name of the region.
  * @size: size of the region.
  * @ram_flags: RamBlock flags. Supported flags: RAM_SHARED, RAM_PMEM,
- *             RAM_NORESERVE, RAM_PROTECTED, RAM_NAMED_FILE, RAM_READONLY,
- *             RAM_READONLY_FD
+ *             RAM_NORESERVE, RAM_PROTECTED.
  * @fd: the fd to mmap.
  * @offset: offset within the file referenced by fd
  * @errp: pointer to Error*, to store an error if it happens.
@@ -2354,25 +2343,6 @@ void memory_region_set_size(MemoryRegion *mr, uint64_t size);
 void memory_region_set_alias_offset(MemoryRegion *mr,
                                     hwaddr offset);
 
-/*
- * memory_region_set_unmergeable: Set a memory region unmergeable
- *
- * Mark a memory region unmergeable, resulting in the memory region (or
- * everything contained in a memory region container) not getting merged when
- * simplifying the address space and notifying memory listeners. Consequently,
- * memory listeners will never get notified about ranges that are larger than
- * the original memory regions.
- *
- * This is primarily useful when multiple aliases to a RAM memory region are
- * mapped into a memory region container, and updates (e.g., enable/disable or
- * map/unmap) of individual memory region aliases are not supposed to affect
- * other memory regions in the same container.
- *
- * @mr: the #MemoryRegion to be updated
- * @unmergeable: whether to mark the #MemoryRegion unmergeable
- */
-void memory_region_set_unmergeable(MemoryRegion *mr, bool unmergeable);
-
 /**
  * memory_region_present: checks if an address relative to a @container
  * translates into #MemoryRegion within @container
@@ -2694,6 +2664,9 @@ struct MemoryRegionCache {
     bool is_write;
 };
 
+#define MEMORY_REGION_CACHE_INVALID ((MemoryRegionCache) { .mrs.mr = NULL })
+
+
 /* address_space_ld*_cached: load from a cached #MemoryRegion
  * address_space_st*_cached: store into a cached #MemoryRegion
  *
@@ -2781,19 +2754,6 @@ int64_t address_space_cache_init(MemoryRegionCache *cache,
                                  hwaddr addr,
                                  hwaddr len,
                                  bool is_write);
-
-/**
- * address_space_cache_init_empty: Initialize empty #MemoryRegionCache
- *
- * @cache: The #MemoryRegionCache to operate on.
- *
- * Initializes #MemoryRegionCache structure without memory region attached.
- * Cache initialized this way can only be safely destroyed, but not used.
- */
-static inline void address_space_cache_init_empty(MemoryRegionCache *cache)
-{
-    cache->mrs.mr = NULL;
-}
 
 /**
  * address_space_cache_invalidate: complete a write to a #MemoryRegionCache

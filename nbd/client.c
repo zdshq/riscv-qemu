@@ -877,9 +877,10 @@ static int nbd_list_meta_contexts(QIOChannel *ioc,
  * Returns: negative errno: failure talking to server
  *          non-negative: enum NBDMode describing server abilities
  */
-static int nbd_start_negotiate(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
+static int nbd_start_negotiate(AioContext *aio_context, QIOChannel *ioc,
+                               QCryptoTLSCreds *tlscreds,
                                const char *hostname, QIOChannel **outioc,
-                               NBDMode max_mode, bool *zeroes,
+                               bool structured_reply, bool *zeroes,
                                Error **errp)
 {
     ERRP_GUARD();
@@ -945,6 +946,10 @@ static int nbd_start_negotiate(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
                     return -EINVAL;
                 }
                 ioc = *outioc;
+                if (aio_context) {
+                    qio_channel_set_blocking(ioc, false, NULL);
+                    qio_channel_attach_aio_context(ioc, aio_context);
+                }
             } else {
                 error_setg(errp, "Server does not support STARTTLS");
                 return -EINVAL;
@@ -953,23 +958,15 @@ static int nbd_start_negotiate(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
         if (fixedNewStyle) {
             int result = 0;
 
-            if (max_mode >= NBD_MODE_EXTENDED) {
-                result = nbd_request_simple_option(ioc,
-                                                   NBD_OPT_EXTENDED_HEADERS,
-                                                   false, errp);
-                if (result) {
-                    return result < 0 ? -EINVAL : NBD_MODE_EXTENDED;
-                }
-            }
-            if (max_mode >= NBD_MODE_STRUCTURED) {
+            if (structured_reply) {
                 result = nbd_request_simple_option(ioc,
                                                    NBD_OPT_STRUCTURED_REPLY,
                                                    false, errp);
-                if (result) {
-                    return result < 0 ? -EINVAL : NBD_MODE_STRUCTURED;
+                if (result < 0) {
+                    return -EINVAL;
                 }
             }
-            return NBD_MODE_SIMPLE;
+            return result ? NBD_MODE_STRUCTURED : NBD_MODE_SIMPLE;
         } else {
             return NBD_MODE_EXPORT_NAME;
         }
@@ -1017,7 +1014,8 @@ static int nbd_negotiate_finish_oldstyle(QIOChannel *ioc, NBDExportInfo *info,
  * Returns: negative errno: failure talking to server
  *          0: server is connected
  */
-int nbd_receive_negotiate(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
+int nbd_receive_negotiate(AioContext *aio_context, QIOChannel *ioc,
+                          QCryptoTLSCreds *tlscreds,
                           const char *hostname, QIOChannel **outioc,
                           NBDExportInfo *info, Error **errp)
 {
@@ -1029,21 +1027,21 @@ int nbd_receive_negotiate(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
     assert(info->name && strlen(info->name) <= NBD_MAX_STRING_SIZE);
     trace_nbd_receive_negotiate_name(info->name);
 
-    result = nbd_start_negotiate(ioc, tlscreds, hostname, outioc,
-                                 info->mode, &zeroes, errp);
+    result = nbd_start_negotiate(aio_context, ioc, tlscreds, hostname, outioc,
+                                 info->structured_reply, &zeroes, errp);
     if (result < 0) {
         return result;
     }
 
-    info->mode = result;
+    info->structured_reply = false;
     info->base_allocation = false;
     if (tlscreds && *outioc) {
         ioc = *outioc;
     }
 
-    switch (info->mode) {
-    case NBD_MODE_EXTENDED:
+    switch ((NBDMode)result) {
     case NBD_MODE_STRUCTURED:
+        info->structured_reply = true;
         if (base_allocation) {
             result = nbd_negotiate_simple_meta_context(ioc, info, errp);
             if (result < 0) {
@@ -1152,8 +1150,8 @@ int nbd_receive_export_list(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
     QIOChannel *sioc = NULL;
 
     *info = NULL;
-    result = nbd_start_negotiate(ioc, tlscreds, hostname, &sioc,
-                                 NBD_MODE_EXTENDED, NULL, errp);
+    result = nbd_start_negotiate(NULL, ioc, tlscreds, hostname, &sioc, true,
+                                 NULL, errp);
     if (tlscreds && sioc) {
         ioc = sioc;
     }
@@ -1164,7 +1162,6 @@ int nbd_receive_export_list(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
     switch ((NBDMode)result) {
     case NBD_MODE_SIMPLE:
     case NBD_MODE_STRUCTURED:
-    case NBD_MODE_EXTENDED:
         /* newstyle - use NBD_OPT_LIST to populate array, then try
          * NBD_OPT_INFO on each array member. If structured replies
          * are enabled, also try NBD_OPT_LIST_META_CONTEXT. */
@@ -1185,7 +1182,7 @@ int nbd_receive_export_list(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
             memset(&array[count - 1], 0, sizeof(*array));
             array[count - 1].name = name;
             array[count - 1].description = desc;
-            array[count - 1].mode = result;
+            array[count - 1].structured_reply = result == NBD_MODE_STRUCTURED;
         }
 
         for (i = 0; i < count; i++) {
@@ -1201,7 +1198,7 @@ int nbd_receive_export_list(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
                 break;
             }
 
-            if (result >= NBD_MODE_STRUCTURED &&
+            if (result == NBD_MODE_STRUCTURED &&
                 nbd_list_meta_contexts(ioc, &array[i], errp) < 0) {
                 goto out;
             }
@@ -1218,7 +1215,6 @@ int nbd_receive_export_list(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
         /* Lone export name is implied, but we can parse length and flags */
         array = g_new0(NBDExportInfo, 1);
         array->name = g_strdup("");
-        array->mode = NBD_MODE_OLDSTYLE;
         count = 1;
 
         if (nbd_negotiate_finish_oldstyle(ioc, array, errp) < 0) {
@@ -1228,7 +1224,7 @@ int nbd_receive_export_list(QIOChannel *ioc, QCryptoTLSCreds *tlscreds,
         /* Send NBD_CMD_DISC as a courtesy to the server, but ignore all
          * errors now that we have the information we wanted. */
         if (nbd_drop(ioc, 124, NULL) == 0) {
-            NBDRequest request = { .type = NBD_CMD_DISC, .mode = result };
+            NBDRequest request = { .type = NBD_CMD_DISC };
 
             nbd_send_request(ioc, &request);
         }
@@ -1356,29 +1352,20 @@ int nbd_disconnect(int fd)
 
 int nbd_send_request(QIOChannel *ioc, NBDRequest *request)
 {
-    uint8_t buf[NBD_EXTENDED_REQUEST_SIZE];
-    size_t len;
+    uint8_t buf[NBD_REQUEST_SIZE];
 
     trace_nbd_send_request(request->from, request->len, request->cookie,
                            request->flags, request->type,
                            nbd_cmd_lookup(request->type));
 
+    stl_be_p(buf, NBD_REQUEST_MAGIC);
     stw_be_p(buf + 4, request->flags);
     stw_be_p(buf + 6, request->type);
     stq_be_p(buf + 8, request->cookie);
     stq_be_p(buf + 16, request->from);
-    if (request->mode >= NBD_MODE_EXTENDED) {
-        stl_be_p(buf, NBD_EXTENDED_REQUEST_MAGIC);
-        stq_be_p(buf + 24, request->len);
-        len = NBD_EXTENDED_REQUEST_SIZE;
-    } else {
-        assert(request->len <= UINT32_MAX);
-        stl_be_p(buf, NBD_REQUEST_MAGIC);
-        stl_be_p(buf + 24, request->len);
-        len = NBD_REQUEST_SIZE;
-    }
+    stl_be_p(buf + 24, request->len);
 
-    return nbd_write(ioc, buf, len, NULL);
+    return nbd_write(ioc, buf, sizeof(buf), NULL);
 }
 
 /* nbd_receive_simple_reply
@@ -1405,36 +1392,30 @@ static int nbd_receive_simple_reply(QIOChannel *ioc, NBDSimpleReply *reply,
     return 0;
 }
 
-/* nbd_receive_reply_chunk_header
+/* nbd_receive_structured_reply_chunk
  * Read structured reply chunk except magic field (which should be already
- * read).  Normalize into the compact form.
+ * read).
  * Payload is not read.
  */
-static int nbd_receive_reply_chunk_header(QIOChannel *ioc, NBDReply *chunk,
-                                          Error **errp)
+static int nbd_receive_structured_reply_chunk(QIOChannel *ioc,
+                                              NBDStructuredReplyChunk *chunk,
+                                              Error **errp)
 {
     int ret;
-    size_t len;
-    uint64_t payload_len;
 
-    if (chunk->magic == NBD_STRUCTURED_REPLY_MAGIC) {
-        len = sizeof(chunk->structured);
-    } else {
-        assert(chunk->magic == NBD_EXTENDED_REPLY_MAGIC);
-        len = sizeof(chunk->extended);
-    }
+    assert(chunk->magic == NBD_STRUCTURED_REPLY_MAGIC);
 
     ret = nbd_read(ioc, (uint8_t *)chunk + sizeof(chunk->magic),
-                   len - sizeof(chunk->magic), "structured chunk",
+                   sizeof(*chunk) - sizeof(chunk->magic), "structured chunk",
                    errp);
     if (ret < 0) {
         return ret;
     }
 
-    /* flags, type, and cookie occupy same space between forms */
-    chunk->structured.flags = be16_to_cpu(chunk->structured.flags);
-    chunk->structured.type = be16_to_cpu(chunk->structured.type);
-    chunk->structured.cookie = be64_to_cpu(chunk->structured.cookie);
+    chunk->flags = be16_to_cpu(chunk->flags);
+    chunk->type = be16_to_cpu(chunk->type);
+    chunk->cookie = be64_to_cpu(chunk->cookie);
+    chunk->length = be32_to_cpu(chunk->length);
 
     /*
      * Because we use BLOCK_STATUS with REQ_ONE, and cap READ requests
@@ -1442,20 +1423,11 @@ static int nbd_receive_reply_chunk_header(QIOChannel *ioc, NBDReply *chunk,
      * this.  Even if we stopped using REQ_ONE, sane servers will cap
      * the number of extents they return for block status.
      */
-    if (chunk->magic == NBD_STRUCTURED_REPLY_MAGIC) {
-        payload_len = be32_to_cpu(chunk->structured.length);
-    } else {
-        /* For now, we are ignoring the extended header offset. */
-        payload_len = be64_to_cpu(chunk->extended.length);
-        chunk->magic = NBD_STRUCTURED_REPLY_MAGIC;
-    }
-    if (payload_len > NBD_MAX_BUFFER_SIZE + sizeof(NBDStructuredReadData)) {
+    if (chunk->length > NBD_MAX_BUFFER_SIZE + sizeof(NBDStructuredReadData)) {
         error_setg(errp, "server chunk %" PRIu32 " (%s) payload is too long",
-                   chunk->structured.type,
-                   nbd_rep_lookup(chunk->structured.type));
+                   chunk->type, nbd_rep_lookup(chunk->type));
         return -EINVAL;
     }
-    chunk->structured.length = payload_len;
 
     return 0;
 }
@@ -1502,21 +1474,19 @@ nbd_read_eof(BlockDriverState *bs, QIOChannel *ioc, void *buffer, size_t size,
 
 /* nbd_receive_reply
  *
- * Wait for a new reply. If this yields, the coroutine must be able to be
- * safely reentered for nbd_client_attach_aio_context().  @mode determines
- * which reply magic we are expecting, although this normalizes the result
- * so that the caller only has to work with compact headers.
+ * Decreases bs->in_flight while waiting for a new reply. This yield is where
+ * we wait indefinitely and the coroutine must be able to be safely reentered
+ * for nbd_client_attach_aio_context().
  *
  * Returns 1 on success
- *         0 on eof, when no data was read
- *         negative errno on failure
+ *         0 on eof, when no data was read (errp is not set)
+ *         negative errno on failure (errp is set)
  */
 int coroutine_fn nbd_receive_reply(BlockDriverState *bs, QIOChannel *ioc,
-                                   NBDReply *reply, NBDMode mode, Error **errp)
+                                   NBDReply *reply, Error **errp)
 {
     int ret;
     const char *type;
-    uint32_t expected;
 
     ret = nbd_read_eof(bs, ioc, &reply->magic, sizeof(reply->magic), errp);
     if (ret <= 0) {
@@ -1525,43 +1495,33 @@ int coroutine_fn nbd_receive_reply(BlockDriverState *bs, QIOChannel *ioc,
 
     reply->magic = be32_to_cpu(reply->magic);
 
-    /* Diagnose but accept wrong-width header */
     switch (reply->magic) {
     case NBD_SIMPLE_REPLY_MAGIC:
-        if (mode >= NBD_MODE_EXTENDED) {
-            trace_nbd_receive_wrong_header(reply->magic,
-                                           nbd_mode_lookup(mode));
-        }
         ret = nbd_receive_simple_reply(ioc, &reply->simple, errp);
         if (ret < 0) {
-            return ret;
+            break;
         }
         trace_nbd_receive_simple_reply(reply->simple.error,
                                        nbd_err_lookup(reply->simple.error),
                                        reply->cookie);
         break;
     case NBD_STRUCTURED_REPLY_MAGIC:
-    case NBD_EXTENDED_REPLY_MAGIC:
-        expected = mode >= NBD_MODE_EXTENDED ? NBD_EXTENDED_REPLY_MAGIC
-            : NBD_STRUCTURED_REPLY_MAGIC;
-        if (reply->magic != expected) {
-            trace_nbd_receive_wrong_header(reply->magic,
-                                           nbd_mode_lookup(mode));
-        }
-        ret = nbd_receive_reply_chunk_header(ioc, reply, errp);
+        ret = nbd_receive_structured_reply_chunk(ioc, &reply->structured, errp);
         if (ret < 0) {
-            return ret;
+            break;
         }
         type = nbd_reply_type_lookup(reply->structured.type);
-        trace_nbd_receive_reply_chunk_header(reply->structured.flags,
-                                             reply->structured.type, type,
-                                             reply->structured.cookie,
-                                             reply->structured.length);
+        trace_nbd_receive_structured_reply_chunk(reply->structured.flags,
+                                                 reply->structured.type, type,
+                                                 reply->structured.cookie,
+                                                 reply->structured.length);
         break;
     default:
-        trace_nbd_receive_wrong_header(reply->magic, nbd_mode_lookup(mode));
         error_setg(errp, "invalid magic (got 0x%" PRIx32 ")", reply->magic);
         return -EINVAL;
+    }
+    if (ret < 0) {
+        return ret;
     }
 
     return 1;

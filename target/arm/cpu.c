@@ -80,7 +80,7 @@ void arm_cpu_synchronize_from_tb(CPUState *cs,
 {
     /* The program counter is always up to date with CF_PCREL. */
     if (!(tb_cflags(tb) & CF_PCREL)) {
-        CPUARMState *env = cpu_env(cs);
+        CPUARMState *env = cs->env_ptr;
         /*
          * It's OK to look at env for the current mode here, because it's
          * never possible for an AArch64 TB to chain to an AArch32 TB.
@@ -97,7 +97,7 @@ void arm_restore_state_to_opc(CPUState *cs,
                               const TranslationBlock *tb,
                               const uint64_t *data)
 {
-    CPUARMState *env = cpu_env(cs);
+    CPUARMState *env = cs->env_ptr;
 
     if (is_a64(env)) {
         if (tb_cflags(tb) & CF_PCREL) {
@@ -243,10 +243,6 @@ static void arm_cpu_reset_hold(Object *obj)
                                   SCTLR_EnDA | SCTLR_EnDB);
         /* Trap on btype=3 for PACIxSP. */
         env->cp15.sctlr_el[1] |= SCTLR_BT0;
-        /* Trap on implementation defined registers. */
-        if (cpu_isar_feature(aa64_tidcp1, cpu)) {
-            env->cp15.sctlr_el[1] |= SCTLR_TIDCP;
-        }
         /* and to the FP/Neon instructions */
         env->cp15.cpacr_el1 = FIELD_DP64(env->cp15.cpacr_el1,
                                          CPACR_EL1, FPEN, 3);
@@ -553,101 +549,6 @@ static void arm_cpu_reset_hold(Object *obj)
     }
 }
 
-void arm_emulate_firmware_reset(CPUState *cpustate, int target_el)
-{
-    ARMCPU *cpu = ARM_CPU(cpustate);
-    CPUARMState *env = &cpu->env;
-    bool have_el3 = arm_feature(env, ARM_FEATURE_EL3);
-    bool have_el2 = arm_feature(env, ARM_FEATURE_EL2);
-
-    /*
-     * Check we have the EL we're aiming for. If that is the
-     * highest implemented EL, then cpu_reset has already done
-     * all the work.
-     */
-    switch (target_el) {
-    case 3:
-        assert(have_el3);
-        return;
-    case 2:
-        assert(have_el2);
-        if (!have_el3) {
-            return;
-        }
-        break;
-    case 1:
-        if (!have_el3 && !have_el2) {
-            return;
-        }
-        break;
-    default:
-        g_assert_not_reached();
-    }
-
-    if (have_el3) {
-        /*
-         * Set the EL3 state so code can run at EL2. This should match
-         * the requirements set by Linux in its booting spec.
-         */
-        if (env->aarch64) {
-            env->cp15.scr_el3 |= SCR_RW;
-            if (cpu_isar_feature(aa64_pauth, cpu)) {
-                env->cp15.scr_el3 |= SCR_API | SCR_APK;
-            }
-            if (cpu_isar_feature(aa64_mte, cpu)) {
-                env->cp15.scr_el3 |= SCR_ATA;
-            }
-            if (cpu_isar_feature(aa64_sve, cpu)) {
-                env->cp15.cptr_el[3] |= R_CPTR_EL3_EZ_MASK;
-                env->vfp.zcr_el[3] = 0xf;
-            }
-            if (cpu_isar_feature(aa64_sme, cpu)) {
-                env->cp15.cptr_el[3] |= R_CPTR_EL3_ESM_MASK;
-                env->cp15.scr_el3 |= SCR_ENTP2;
-                env->vfp.smcr_el[3] = 0xf;
-            }
-            if (cpu_isar_feature(aa64_hcx, cpu)) {
-                env->cp15.scr_el3 |= SCR_HXEN;
-            }
-            if (cpu_isar_feature(aa64_fgt, cpu)) {
-                env->cp15.scr_el3 |= SCR_FGTEN;
-            }
-        }
-
-        if (target_el == 2) {
-            /* If the guest is at EL2 then Linux expects the HVC insn to work */
-            env->cp15.scr_el3 |= SCR_HCE;
-        }
-
-        /* Put CPU into non-secure state */
-        env->cp15.scr_el3 |= SCR_NS;
-        /* Set NSACR.{CP11,CP10} so NS can access the FPU */
-        env->cp15.nsacr |= 3 << 10;
-    }
-
-    if (have_el2 && target_el < 2) {
-        /* Set EL2 state so code can run at EL1. */
-        if (env->aarch64) {
-            env->cp15.hcr_el2 |= HCR_RW;
-        }
-    }
-
-    /* Set the CPU to the desired state */
-    if (env->aarch64) {
-        env->pstate = aarch64_pstate_mode(target_el, true);
-    } else {
-        static const uint32_t mode_for_el[] = {
-            0,
-            ARM_CPU_MODE_SVC,
-            ARM_CPU_MODE_HYP,
-            ARM_CPU_MODE_SVC,
-        };
-
-        cpsr_write(env, mode_for_el[target_el], CPSR_M, CPSRWriteRaw);
-    }
-}
-
-
 #if defined(CONFIG_TCG) && !defined(CONFIG_USER_ONLY)
 
 static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx,
@@ -655,7 +556,7 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx,
                                      unsigned int cur_el, bool secure,
                                      uint64_t hcr_el2)
 {
-    CPUARMState *env = cpu_env(cs);
+    CPUARMState *env = cs->env_ptr;
     bool pstate_unmasked;
     bool unmasked = false;
 
@@ -785,7 +686,7 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx,
 static bool arm_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
     CPUClass *cc = CPU_GET_CLASS(cs);
-    CPUARMState *env = cpu_env(cs);
+    CPUARMState *env = cs->env_ptr;
     uint32_t cur_el = arm_current_el(env);
     bool secure = arm_is_secure(env);
     uint64_t hcr_el2 = arm_hcr_el2_eff(env);
@@ -1310,6 +1211,7 @@ static void arm_cpu_initfn(Object *obj)
 {
     ARMCPU *cpu = ARM_CPU(obj);
 
+    cpu_set_cpustate_pointers(cpu);
     cpu->cp_regs = g_hash_table_new_full(g_direct_hash, g_direct_equal,
                                          NULL, g_free);
 
@@ -1454,108 +1356,17 @@ unsigned int gt_cntfrq_period_ns(ARMCPU *cpu)
       NANOSECONDS_PER_SECOND / cpu->gt_cntfrq_hz : 1;
 }
 
-static void arm_cpu_propagate_feature_implications(ARMCPU *cpu)
-{
-    CPUARMState *env = &cpu->env;
-    bool no_aa32 = false;
-
-    /*
-     * Some features automatically imply others: set the feature
-     * bits explicitly for these cases.
-     */
-
-    if (arm_feature(env, ARM_FEATURE_M)) {
-        set_feature(env, ARM_FEATURE_PMSA);
-    }
-
-    if (arm_feature(env, ARM_FEATURE_V8)) {
-        if (arm_feature(env, ARM_FEATURE_M)) {
-            set_feature(env, ARM_FEATURE_V7);
-        } else {
-            set_feature(env, ARM_FEATURE_V7VE);
-        }
-    }
-
-    /*
-     * There exist AArch64 cpus without AArch32 support.  When KVM
-     * queries ID_ISAR0_EL1 on such a host, the value is UNKNOWN.
-     * Similarly, we cannot check ID_AA64PFR0 without AArch64 support.
-     * As a general principle, we also do not make ID register
-     * consistency checks anywhere unless using TCG, because only
-     * for TCG would a consistency-check failure be a QEMU bug.
-     */
-    if (arm_feature(&cpu->env, ARM_FEATURE_AARCH64)) {
-        no_aa32 = !cpu_isar_feature(aa64_aa32, cpu);
-    }
-
-    if (arm_feature(env, ARM_FEATURE_V7VE)) {
-        /*
-         * v7 Virtualization Extensions. In real hardware this implies
-         * EL2 and also the presence of the Security Extensions.
-         * For QEMU, for backwards-compatibility we implement some
-         * CPUs or CPU configs which have no actual EL2 or EL3 but do
-         * include the various other features that V7VE implies.
-         * Presence of EL2 itself is ARM_FEATURE_EL2, and of the
-         * Security Extensions is ARM_FEATURE_EL3.
-         */
-        assert(!tcg_enabled() || no_aa32 ||
-               cpu_isar_feature(aa32_arm_div, cpu));
-        set_feature(env, ARM_FEATURE_LPAE);
-        set_feature(env, ARM_FEATURE_V7);
-    }
-    if (arm_feature(env, ARM_FEATURE_V7)) {
-        set_feature(env, ARM_FEATURE_VAPA);
-        set_feature(env, ARM_FEATURE_THUMB2);
-        set_feature(env, ARM_FEATURE_MPIDR);
-        if (!arm_feature(env, ARM_FEATURE_M)) {
-            set_feature(env, ARM_FEATURE_V6K);
-        } else {
-            set_feature(env, ARM_FEATURE_V6);
-        }
-
-        /*
-         * Always define VBAR for V7 CPUs even if it doesn't exist in
-         * non-EL3 configs. This is needed by some legacy boards.
-         */
-        set_feature(env, ARM_FEATURE_VBAR);
-    }
-    if (arm_feature(env, ARM_FEATURE_V6K)) {
-        set_feature(env, ARM_FEATURE_V6);
-        set_feature(env, ARM_FEATURE_MVFR);
-    }
-    if (arm_feature(env, ARM_FEATURE_V6)) {
-        set_feature(env, ARM_FEATURE_V5);
-        if (!arm_feature(env, ARM_FEATURE_M)) {
-            assert(!tcg_enabled() || no_aa32 ||
-                   cpu_isar_feature(aa32_jazelle, cpu));
-            set_feature(env, ARM_FEATURE_AUXCR);
-        }
-    }
-    if (arm_feature(env, ARM_FEATURE_V5)) {
-        set_feature(env, ARM_FEATURE_V4T);
-    }
-    if (arm_feature(env, ARM_FEATURE_LPAE)) {
-        set_feature(env, ARM_FEATURE_V7MP);
-    }
-    if (arm_feature(env, ARM_FEATURE_CBAR_RO)) {
-        set_feature(env, ARM_FEATURE_CBAR);
-    }
-    if (arm_feature(env, ARM_FEATURE_THUMB2) &&
-        !arm_feature(env, ARM_FEATURE_M)) {
-        set_feature(env, ARM_FEATURE_THUMB_DSP);
-    }
-}
-
 void arm_cpu_post_init(Object *obj)
 {
     ARMCPU *cpu = ARM_CPU(obj);
 
-    /*
-     * Some features imply others. Figure this out now, because we
-     * are going to look at the feature bits in deciding which
-     * properties to add.
+    /* M profile implies PMSA. We have to do this here rather than
+     * in realize with the other feature-implication checks because
+     * we look at the PMSA bit to see if we should add some properties.
      */
-    arm_cpu_propagate_feature_implications(cpu);
+    if (arm_feature(&cpu->env, ARM_FEATURE_M)) {
+        set_feature(&cpu->env, ARM_FEATURE_PMSA);
+    }
 
     if (arm_feature(&cpu->env, ARM_FEATURE_CBAR) ||
         arm_feature(&cpu->env, ARM_FEATURE_CBAR_RO)) {
@@ -1777,6 +1588,7 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
     CPUARMState *env = &cpu->env;
     int pagebits;
     Error *local_err = NULL;
+    bool no_aa32 = false;
 
     /* Use pc-relative instructions in system-mode */
 #ifndef CONFIG_USER_ONLY
@@ -2057,6 +1869,81 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
         cpu->isar.id_isar3 = u;
     }
 
+    /* Some features automatically imply others: */
+    if (arm_feature(env, ARM_FEATURE_V8)) {
+        if (arm_feature(env, ARM_FEATURE_M)) {
+            set_feature(env, ARM_FEATURE_V7);
+        } else {
+            set_feature(env, ARM_FEATURE_V7VE);
+        }
+    }
+
+    /*
+     * There exist AArch64 cpus without AArch32 support.  When KVM
+     * queries ID_ISAR0_EL1 on such a host, the value is UNKNOWN.
+     * Similarly, we cannot check ID_AA64PFR0 without AArch64 support.
+     * As a general principle, we also do not make ID register
+     * consistency checks anywhere unless using TCG, because only
+     * for TCG would a consistency-check failure be a QEMU bug.
+     */
+    if (arm_feature(&cpu->env, ARM_FEATURE_AARCH64)) {
+        no_aa32 = !cpu_isar_feature(aa64_aa32, cpu);
+    }
+
+    if (arm_feature(env, ARM_FEATURE_V7VE)) {
+        /* v7 Virtualization Extensions. In real hardware this implies
+         * EL2 and also the presence of the Security Extensions.
+         * For QEMU, for backwards-compatibility we implement some
+         * CPUs or CPU configs which have no actual EL2 or EL3 but do
+         * include the various other features that V7VE implies.
+         * Presence of EL2 itself is ARM_FEATURE_EL2, and of the
+         * Security Extensions is ARM_FEATURE_EL3.
+         */
+        assert(!tcg_enabled() || no_aa32 ||
+               cpu_isar_feature(aa32_arm_div, cpu));
+        set_feature(env, ARM_FEATURE_LPAE);
+        set_feature(env, ARM_FEATURE_V7);
+    }
+    if (arm_feature(env, ARM_FEATURE_V7)) {
+        set_feature(env, ARM_FEATURE_VAPA);
+        set_feature(env, ARM_FEATURE_THUMB2);
+        set_feature(env, ARM_FEATURE_MPIDR);
+        if (!arm_feature(env, ARM_FEATURE_M)) {
+            set_feature(env, ARM_FEATURE_V6K);
+        } else {
+            set_feature(env, ARM_FEATURE_V6);
+        }
+
+        /* Always define VBAR for V7 CPUs even if it doesn't exist in
+         * non-EL3 configs. This is needed by some legacy boards.
+         */
+        set_feature(env, ARM_FEATURE_VBAR);
+    }
+    if (arm_feature(env, ARM_FEATURE_V6K)) {
+        set_feature(env, ARM_FEATURE_V6);
+        set_feature(env, ARM_FEATURE_MVFR);
+    }
+    if (arm_feature(env, ARM_FEATURE_V6)) {
+        set_feature(env, ARM_FEATURE_V5);
+        if (!arm_feature(env, ARM_FEATURE_M)) {
+            assert(!tcg_enabled() || no_aa32 ||
+                   cpu_isar_feature(aa32_jazelle, cpu));
+            set_feature(env, ARM_FEATURE_AUXCR);
+        }
+    }
+    if (arm_feature(env, ARM_FEATURE_V5)) {
+        set_feature(env, ARM_FEATURE_V4T);
+    }
+    if (arm_feature(env, ARM_FEATURE_LPAE)) {
+        set_feature(env, ARM_FEATURE_V7MP);
+    }
+    if (arm_feature(env, ARM_FEATURE_CBAR_RO)) {
+        set_feature(env, ARM_FEATURE_CBAR);
+    }
+    if (arm_feature(env, ARM_FEATURE_THUMB2) &&
+        !arm_feature(env, ARM_FEATURE_M)) {
+        set_feature(env, ARM_FEATURE_THUMB_DSP);
+    }
 
     /*
      * We rely on no XScale CPU having VFP so we can use the same bits in the
@@ -2169,27 +2056,16 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
                                        ID_PFR1, VIRTUALIZATION, 0);
     }
 
-    if (cpu_isar_feature(aa64_mte, cpu)) {
-        /*
-         * The architectural range of GM blocksize is 2-6, however qemu
-         * doesn't support blocksize of 2 (see HELPER(ldgm)).
-         */
-        if (tcg_enabled()) {
-            assert(cpu->gm_blocksize >= 3 && cpu->gm_blocksize <= 6);
-        }
-
 #ifndef CONFIG_USER_ONLY
+    if (cpu->tag_memory == NULL && cpu_isar_feature(aa64_mte, cpu)) {
         /*
-         * If we do not have tag-memory provided by the machine,
-         * reduce MTE support to instructions enabled at EL0.
-         * This matches Cortex-A710 BROADCASTMTE input being LOW.
+         * Disable the MTE feature bits if we do not have tag-memory
+         * provided by the machine.
          */
-        if (cpu->tag_memory == NULL) {
-            cpu->isar.id_aa64pfr1 =
-                FIELD_DP64(cpu->isar.id_aa64pfr1, ID_AA64PFR1, MTE, 1);
-        }
-#endif
+        cpu->isar.id_aa64pfr1 =
+            FIELD_DP64(cpu->isar.id_aa64pfr1, ID_AA64PFR1, MTE, 0);
     }
+#endif
 
     if (tcg_enabled()) {
         /*
@@ -2201,9 +2077,6 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
         /* FEAT_SPE (Statistical Profiling Extension) */
         cpu->isar.id_aa64dfr0 =
             FIELD_DP64(cpu->isar.id_aa64dfr0, ID_AA64DFR0, PMSVER, 0);
-        /* FEAT_TRBE (Trace Buffer Extension) */
-        cpu->isar.id_aa64dfr0 =
-            FIELD_DP64(cpu->isar.id_aa64dfr0, ID_AA64DFR0, TRACEBUFFER, 0);
         /* FEAT_TRF (Self-hosted Trace Extension) */
         cpu->isar.id_aa64dfr0 =
             FIELD_DP64(cpu->isar.id_aa64dfr0, ID_AA64DFR0, TRACEFILT, 0);
@@ -2295,12 +2168,6 @@ static void arm_cpu_realizefn(DeviceState *dev, Error **errp)
     if (arm_feature(env, ARM_FEATURE_EL3)) {
         set_feature(env, ARM_FEATURE_VBAR);
     }
-
-#ifndef CONFIG_USER_ONLY
-    if (tcg_enabled() && cpu_isar_feature(aa64_rme, cpu)) {
-        arm_register_el_change_hook(cpu, &gt_rme_post_el_change, 0);
-    }
-#endif
 
     register_cp_regs_for_features(cpu);
     arm_cpu_register_gdb_regs_for_features(cpu);
@@ -2414,15 +2281,15 @@ static Property arm_cpu_properties[] = {
     DEFINE_PROP_END_OF_LIST()
 };
 
-static const gchar *arm_gdb_arch_name(CPUState *cs)
+static gchar *arm_gdb_arch_name(CPUState *cs)
 {
     ARMCPU *cpu = ARM_CPU(cs);
     CPUARMState *env = &cpu->env;
 
     if (arm_feature(env, ARM_FEATURE_IWMMXT)) {
-        return "iwmmxt";
+        return g_strdup("iwmmxt");
     }
-    return "arm";
+    return g_strdup("arm");
 }
 
 #ifndef CONFIG_USER_ONLY
@@ -2487,6 +2354,7 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
     cc->sysemu_ops = &arm_sysemu_ops;
 #endif
     cc->gdb_num_core_regs = 26;
+    cc->gdb_core_xml_file = "arm-core.xml";
     cc->gdb_arch_name = arm_gdb_arch_name;
     cc->gdb_get_dynamic_xml = arm_gdb_get_dynamic_xml;
     cc->gdb_stop_before_watchpoint = true;
@@ -2508,17 +2376,18 @@ static void arm_cpu_instance_init(Object *obj)
 static void cpu_register_class_init(ObjectClass *oc, void *data)
 {
     ARMCPUClass *acc = ARM_CPU_CLASS(oc);
-    CPUClass *cc = CPU_CLASS(acc);
 
     acc->info = data;
-    cc->gdb_core_xml_file = "arm-core.xml";
 }
 
 void arm_cpu_register(const ARMCPUInfo *info)
 {
     TypeInfo type_info = {
         .parent = TYPE_ARM_CPU,
+        .instance_size = sizeof(ARMCPU),
+        .instance_align = __alignof__(ARMCPU),
         .instance_init = arm_cpu_instance_init,
+        .class_size = sizeof(ARMCPUClass),
         .class_init = info->class_init ?: cpu_register_class_init,
         .class_data = (void *)info,
     };

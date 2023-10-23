@@ -305,7 +305,7 @@ cbw_co_snapshot_block_status(BlockDriverState *bs,
         return -EACCES;
     }
 
-    ret = bdrv_co_block_status(child->bs, offset, cur_bytes, pnum, map, file);
+    ret = bdrv_block_status(child->bs, offset, cur_bytes, pnum, map, file);
     if (child == s->target) {
         /*
          * We refer to s->target only for areas that we've written to it.
@@ -341,11 +341,11 @@ static void cbw_refresh_filename(BlockDriverState *bs)
             bs->file->bs->filename);
 }
 
-static void GRAPH_RDLOCK
-cbw_child_perm(BlockDriverState *bs, BdrvChild *c, BdrvChildRole role,
-               BlockReopenQueue *reopen_queue,
-               uint64_t perm, uint64_t shared,
-               uint64_t *nperm, uint64_t *nshared)
+static void cbw_child_perm(BlockDriverState *bs, BdrvChild *c,
+                           BdrvChildRole role,
+                           BlockReopenQueue *reopen_queue,
+                           uint64_t perm, uint64_t shared,
+                           uint64_t *nperm, uint64_t *nshared)
 {
     if (!(role & BDRV_CHILD_FILTERED)) {
         /*
@@ -503,7 +503,7 @@ static void cbw_close(BlockDriverState *bs)
     s->bcs = NULL;
 }
 
-static BlockDriver bdrv_cbw_filter = {
+BlockDriver bdrv_cbw_filter = {
     .format_name = "copy-before-write",
     .instance_size = sizeof(BDRVCopyBeforeWriteState),
 

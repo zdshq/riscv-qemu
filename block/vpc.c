@@ -446,14 +446,12 @@ static int vpc_open(BlockDriverState *bs, QDict *options, int flags,
     }
 
     /* Disable migration when VHD images are used */
-    bdrv_graph_rdlock_main_loop();
     error_setg(&s->migration_blocker, "The vpc format used by node '%s' "
                "does not support live migration",
                bdrv_get_device_or_node_name(bs));
-    bdrv_graph_rdunlock_main_loop();
-
-    ret = migrate_add_blocker(&s->migration_blocker, errp);
+    ret = migrate_add_blocker(s->migration_blocker, errp);
     if (ret < 0) {
+        error_free(s->migration_blocker);
         goto fail;
     }
 
@@ -512,7 +510,7 @@ get_image_offset(BlockDriverState *bs, uint64_t offset, bool write, int *err)
        miss sparse read optimization, but it's not a problem in terms of
        correctness. */
     if (write && (s->last_bitmap_offset != bitmap_offset)) {
-        g_autofree uint8_t *bitmap = g_malloc(s->bitmap_size);
+        uint8_t bitmap[s->bitmap_size];
         int r;
 
         s->last_bitmap_offset = bitmap_offset;
@@ -560,7 +558,7 @@ alloc_block(BlockDriverState *bs, int64_t offset)
     int64_t bat_offset;
     uint32_t index, bat_value;
     int ret;
-    g_autofree uint8_t *bitmap = g_malloc(s->bitmap_size);
+    uint8_t bitmap[s->bitmap_size];
 
     /* Check if sector_num is valid */
     if ((offset < 0) || (offset > bs->total_sectors * BDRV_SECTOR_SIZE)) {
@@ -1189,7 +1187,8 @@ static void vpc_close(BlockDriverState *bs)
     g_free(s->pageentry_u8);
 #endif
 
-    migrate_del_blocker(&s->migration_blocker);
+    migrate_del_blocker(s->migration_blocker);
+    error_free(s->migration_blocker);
 }
 
 static QemuOptsList vpc_create_opts = {

@@ -129,12 +129,6 @@ struct PCMachineClass {
 
     /* resizable acpi blob compat */
     bool resizable_acpi_blob;
-
-    /*
-     * whether the machine type implements broken 32-bit address space bound
-     * check for memory.
-     */
-    bool broken_32bit_mem_addr_check;
 };
 
 #define TYPE_PC_MACHINE "generic-pc-machine"
@@ -205,9 +199,6 @@ void pc_madt_cpu_entry(int uid, const CPUArchIdList *apic_ids,
 
 /* sgx.c */
 void pc_machine_init_sgx_epc(PCMachineState *pcms);
-
-extern GlobalProperty pc_compat_8_1[];
-extern const size_t pc_compat_8_1_len;
 
 extern GlobalProperty pc_compat_8_0[];
 extern const size_t pc_compat_8_0_len;

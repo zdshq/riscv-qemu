@@ -61,8 +61,6 @@ static void pnv_core_cpu_reset(PnvCore *pc, PowerPCCPU *cpu)
     hreg_compute_hflags(env);
     ppc_maybe_interrupt(env);
 
-    cpu_ppc_tb_reset(env);
-
     pcc->intc_reset(pc->chip, cpu);
 }
 

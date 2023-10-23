@@ -148,7 +148,7 @@ tcg
   ~ (/qemu)?(/accel/tcg|/replay|/tcg)/.*
 
 sysemu
-  ~ (/qemu)?(/system/.*|/accel/.*)
+  ~ (/qemu)?(/softmmu/.*|/accel/.*)
 
 (headers)
   ~ (/qemu)?(/include/.*)

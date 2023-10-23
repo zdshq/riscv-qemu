@@ -65,7 +65,8 @@ int riscv_cpu_mmu_index(CPURISCVState *env, bool ifetch)
 void cpu_get_tb_cpu_state(CPURISCVState *env, vaddr *pc,
                           uint64_t *cs_base, uint32_t *pflags)
 {
-    RISCVCPU *cpu = env_archcpu(env);
+    CPUState *cs = env_cpu(env);
+    RISCVCPU *cpu = RISCV_CPU(cs);
     RISCVExtStatus fs, vs;
     uint32_t flags = 0;
 
@@ -860,11 +861,11 @@ static int get_physical_address(CPURISCVState *env, hwaddr *physical,
     }
 
     bool pbmte = env->menvcfg & MENVCFG_PBMTE;
-    bool adue = env->menvcfg & MENVCFG_ADUE;
+    bool hade = env->menvcfg & MENVCFG_HADE;
 
     if (first_stage && two_stage && env->virt_enabled) {
         pbmte = pbmte && (env->henvcfg & HENVCFG_PBMTE);
-        adue = adue && (env->henvcfg & HENVCFG_ADUE);
+        hade = hade && (env->henvcfg & HENVCFG_HADE);
     }
 
     int ptshift = (levels - 1) * ptidxbits;
@@ -1025,7 +1026,7 @@ restart:
 
     /* Page table updates need to be atomic with MTTCG enabled */
     if (updated_pte != pte && !is_debug) {
-        if (!adue) {
+        if (!hade) {
             return TRANSLATE_FAIL;
         }
 

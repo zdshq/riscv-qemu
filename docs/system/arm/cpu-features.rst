@@ -210,20 +210,15 @@ TCG VCPU Features
 TCG VCPU features are CPU features that are specific to TCG.
 Below is the list of TCG VCPU features and their descriptions.
 
-``pauth``
-  Enable or disable ``FEAT_Pauth`` entirely.
-
 ``pauth-impdef``
-  When ``pauth`` is enabled, select the QEMU implementation defined algorithm.
+  When ``FEAT_Pauth`` is enabled, either the *impdef* (Implementation
+  Defined) algorithm is enabled or the *architected* QARMA algorithm
+  is enabled.  By default the impdef algorithm is disabled, and QARMA
+  is enabled.
 
-``pauth-qarma3``
-  When ``pauth`` is enabled, select the architected QARMA3 algorithm.
-
-Without either ``pauth-impdef`` or ``pauth-qarma3`` enabled,
-the architected QARMA5 algorithm is used.  The architected QARMA5
-and QARMA3 algorithms have good cryptographic properties, but can
-be quite slow to emulate.  The impdef algorithm used by QEMU is
-non-cryptographic but significantly faster.
+  The architected QARMA algorithm has good cryptographic properties,
+  but can be quite slow to emulate.  The impdef algorithm used by QEMU
+  is non-cryptographic but significantly faster.
 
 SVE CPU Properties
 ==================

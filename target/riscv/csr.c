@@ -21,9 +21,9 @@
 #include "qemu/log.h"
 #include "qemu/timer.h"
 #include "cpu.h"
-#include "tcg/tcg-cpu.h"
 #include "pmu.h"
 #include "time_helper.h"
+#include "qemu/main-loop.h"
 #include "exec/exec-all.h"
 #include "exec/tb-flush.h"
 #include "sysemu/cpu-timers.h"
@@ -1685,7 +1685,7 @@ static int rmw_iprio(target_ulong xlen,
 static int rmw_xireg(CPURISCVState *env, int csrno, target_ulong *val,
                      target_ulong new_val, target_ulong wr_mask)
 {
-    bool virt, isel_reserved;
+    bool virt;
     uint8_t *iprio;
     int ret = -EINVAL;
     target_ulong priv, isel, vgein;
@@ -1695,7 +1695,6 @@ static int rmw_xireg(CPURISCVState *env, int csrno, target_ulong *val,
 
     /* Decode register details from CSR number */
     virt = false;
-    isel_reserved = false;
     switch (csrno) {
     case CSR_MIREG:
         iprio = env->miprio;
@@ -1740,13 +1739,11 @@ static int rmw_xireg(CPURISCVState *env, int csrno, target_ulong *val,
                                                   riscv_cpu_mxl_bits(env)),
                                     val, new_val, wr_mask);
         }
-    } else {
-        isel_reserved = true;
     }
 
 done:
     if (ret) {
-        return (env->virt_enabled && virt && !isel_reserved) ?
+        return (env->virt_enabled && virt) ?
                RISCV_EXCP_VIRT_INSTRUCTION_FAULT : RISCV_EXCP_ILLEGAL_INST;
     }
     return RISCV_EXCP_NONE;
@@ -1837,11 +1834,8 @@ static RISCVException write_mcountinhibit(CPURISCVState *env, int csrno,
 {
     int cidx;
     PMUCTRState *counter;
-    RISCVCPU *cpu = env_archcpu(env);
 
-    /* WARL register - disable unavailable counters; TM bit is always 0 */
-    env->mcountinhibit =
-        val & (cpu->pmu_avail_ctrs | COUNTEREN_CY | COUNTEREN_IR);
+    env->mcountinhibit = val;
 
     /* Check if any other counter is also monitoring cycles/instructions */
     for (cidx = 0; cidx < RV_MAX_MHPMCOUNTERS; cidx++) {
@@ -1864,11 +1858,7 @@ static RISCVException read_mcounteren(CPURISCVState *env, int csrno,
 static RISCVException write_mcounteren(CPURISCVState *env, int csrno,
                                        target_ulong val)
 {
-    RISCVCPU *cpu = env_archcpu(env);
-
-    /* WARL register - disable unavailable counters */
-    env->mcounteren = val & (cpu->pmu_avail_ctrs | COUNTEREN_CY | COUNTEREN_TM |
-                             COUNTEREN_IR);
+    env->mcounteren = val;
     return RISCV_EXCP_NONE;
 }
 
@@ -1961,7 +1951,7 @@ static RISCVException write_menvcfg(CPURISCVState *env, int csrno,
     if (riscv_cpu_mxl(env) == MXL_RV64) {
         mask |= (cfg->ext_svpbmt ? MENVCFG_PBMTE : 0) |
                 (cfg->ext_sstc ? MENVCFG_STCE : 0) |
-                (cfg->ext_svadu ? MENVCFG_ADUE : 0);
+                (cfg->ext_svadu ? MENVCFG_HADE : 0);
     }
     env->menvcfg = (env->menvcfg & ~mask) | (val & mask);
 
@@ -1981,7 +1971,7 @@ static RISCVException write_menvcfgh(CPURISCVState *env, int csrno,
     const RISCVCPUConfig *cfg = riscv_cpu_cfg(env);
     uint64_t mask = (cfg->ext_svpbmt ? MENVCFG_PBMTE : 0) |
                     (cfg->ext_sstc ? MENVCFG_STCE : 0) |
-                    (cfg->ext_svadu ? MENVCFG_ADUE : 0);
+                    (cfg->ext_svadu ? MENVCFG_HADE : 0);
     uint64_t valh = (uint64_t)val << 32;
 
     env->menvcfg = (env->menvcfg & ~mask) | (valh & mask);
@@ -2033,7 +2023,7 @@ static RISCVException read_henvcfg(CPURISCVState *env, int csrno,
      * henvcfg.stce is read_only 0 when menvcfg.stce = 0
      * henvcfg.hade is read_only 0 when menvcfg.hade = 0
      */
-    *val = env->henvcfg & (~(HENVCFG_PBMTE | HENVCFG_STCE | HENVCFG_ADUE) |
+    *val = env->henvcfg & (~(HENVCFG_PBMTE | HENVCFG_STCE | HENVCFG_HADE) |
                            env->menvcfg);
     return RISCV_EXCP_NONE;
 }
@@ -2050,7 +2040,7 @@ static RISCVException write_henvcfg(CPURISCVState *env, int csrno,
     }
 
     if (riscv_cpu_mxl(env) == MXL_RV64) {
-        mask |= env->menvcfg & (HENVCFG_PBMTE | HENVCFG_STCE | HENVCFG_ADUE);
+        mask |= env->menvcfg & (HENVCFG_PBMTE | HENVCFG_STCE | HENVCFG_HADE);
     }
 
     env->henvcfg = (env->henvcfg & ~mask) | (val & mask);
@@ -2068,7 +2058,7 @@ static RISCVException read_henvcfgh(CPURISCVState *env, int csrno,
         return ret;
     }
 
-    *val = (env->henvcfg & (~(HENVCFG_PBMTE | HENVCFG_STCE | HENVCFG_ADUE) |
+    *val = (env->henvcfg & (~(HENVCFG_PBMTE | HENVCFG_STCE | HENVCFG_HADE) |
                             env->menvcfg)) >> 32;
     return RISCV_EXCP_NONE;
 }
@@ -2077,7 +2067,7 @@ static RISCVException write_henvcfgh(CPURISCVState *env, int csrno,
                                      target_ulong val)
 {
     uint64_t mask = env->menvcfg & (HENVCFG_PBMTE | HENVCFG_STCE |
-                                    HENVCFG_ADUE);
+                                    HENVCFG_HADE);
     uint64_t valh = (uint64_t)val << 32;
     RISCVException ret;
 
@@ -3226,7 +3216,7 @@ static int write_hvipriox(CPURISCVState *env, int first_index,
                RISCV_EXCP_VIRT_INSTRUCTION_FAULT : RISCV_EXCP_ILLEGAL_INST;
     }
 
-    /* Fill-up priority array */
+    /* Fill-up priority arrary */
     for (i = 0; i < num_irqs; i++) {
         if (riscv_cpu_hviprio_index2irq(first_index + i, &irq, &rdzero)) {
             continue;
@@ -3895,7 +3885,7 @@ static inline RISCVException riscv_csrrw_check(CPURISCVState *env,
     if (riscv_has_ext(env, RVH) && env->priv == PRV_S &&
         !env->virt_enabled) {
         /*
-         * We are in HS mode. Add 1 to the effective privilege level to
+         * We are in HS mode. Add 1 to the effective privledge level to
          * allow us to access the Hypervisor CSRs.
          */
         effective_priv++;
@@ -3918,27 +3908,21 @@ static RISCVException riscv_csrrw_do64(CPURISCVState *env, int csrno,
                                        target_ulong write_mask)
 {
     RISCVException ret;
-    target_ulong old_value = 0;
+    target_ulong old_value;
 
     /* execute combined read/write operation if it exists */
     if (csr_ops[csrno].op) {
         return csr_ops[csrno].op(env, csrno, ret_value, new_value, write_mask);
     }
 
-    /*
-     * ret_value == NULL means that rd=x0 and we're coming from helper_csrw()
-     * and we can't throw side effects caused by CSR reads.
-     */
-    if (ret_value) {
-        /* if no accessor exists then return failure */
-        if (!csr_ops[csrno].read) {
-            return RISCV_EXCP_ILLEGAL_INST;
-        }
-        /* read old value */
-        ret = csr_ops[csrno].read(env, csrno, &old_value);
-        if (ret != RISCV_EXCP_NONE) {
-            return ret;
-        }
+    /* if no accessor exists then return failure */
+    if (!csr_ops[csrno].read) {
+        return RISCV_EXCP_ILLEGAL_INST;
+    }
+    /* read old value */
+    ret = csr_ops[csrno].read(env, csrno, &old_value);
+    if (ret != RISCV_EXCP_NONE) {
+        return ret;
     }
 
     /* write value if writable and write mask set, otherwise drop writes */

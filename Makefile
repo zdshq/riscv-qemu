@@ -164,6 +164,14 @@ ifneq ($(filter $(ninja-targets), $(ninja-cmd-goals)),)
 endif
 endif
 
+ifeq ($(CONFIG_PLUGIN),y)
+.PHONY: plugins
+plugins:
+	$(call quiet-command,\
+		$(MAKE) $(SUBDIR_MAKEFLAGS) -C contrib/plugins V="$(V)", \
+		"BUILD", "example plugins")
+endif # $(CONFIG_PLUGIN)
+
 else # config-host.mak does not exist
 ifneq ($(filter-out $(UNCHECKED_GOALS),$(MAKECMDGOALS)),$(if $(MAKECMDGOALS),,fail))
 $(error Please call configure before running make)
@@ -176,20 +184,15 @@ include $(SRC_PATH)/tests/Makefile.include
 
 all: recurse-all
 
-SUBDIR_RULES=$(foreach t, all clean distclean, $(addsuffix /$(t), $(SUBDIRS)))
-.PHONY: $(SUBDIR_RULES)
-$(SUBDIR_RULES):
+ROMS_RULES=$(foreach t, all clean distclean, $(addsuffix /$(t), $(ROMS)))
+.PHONY: $(ROMS_RULES)
+$(ROMS_RULES):
 	$(call quiet-command,$(MAKE) $(SUBDIR_MAKEFLAGS) -C $(dir $@) V="$(V)" TARGET_DIR="$(dir $@)" $(notdir $@),)
 
-ifneq ($(filter contrib/plugins, $(SUBDIRS)),)
-.PHONY: plugins
-plugins: contrib/plugins/all
-endif
-
 .PHONY: recurse-all recurse-clean
-recurse-all: $(addsuffix /all, $(SUBDIRS))
-recurse-clean: $(addsuffix /clean, $(SUBDIRS))
-recurse-distclean: $(addsuffix /distclean, $(SUBDIRS))
+recurse-all: $(addsuffix /all, $(ROMS))
+recurse-clean: $(addsuffix /clean, $(ROMS))
+recurse-distclean: $(addsuffix /distclean, $(ROMS))
 
 ######################################################################
 
@@ -293,7 +296,7 @@ help:
 	$(call print-help,cscope,Generate cscope index)
 	$(call print-help,sparse,Run sparse on the QEMU source)
 	@echo  ''
-ifneq ($(filter contrib/plugins, $(SUBDIRS)),)
+ifeq ($(CONFIG_PLUGIN),y)
 	@echo  'Plugin targets:'
 	$(call print-help,plugins,Build the example TCG plugins)
 	@echo  ''
@@ -313,7 +316,7 @@ endif
 	@echo  'Documentation targets:'
 	$(call print-help,html man,Build documentation in specified format)
 	@echo  ''
-ifneq ($(filter msi, $(ninja-targets)),)
+ifdef CONFIG_WIN32
 	@echo  'Windows targets:'
 	$(call print-help,installer,Build NSIS-based installer for QEMU)
 	$(call print-help,msi,Build MSI-based installer for qemu-ga)
