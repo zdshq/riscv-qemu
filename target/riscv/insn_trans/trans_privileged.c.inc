@@ -26,11 +26,20 @@ static bool trans_ecall(DisasContext *ctx, arg_ecall *a)
 }
 #include "include/sysemu/runstate.h"
 extern ShutdownAction shutdown_action;
+extern bool xpoint_profiling_started;
+extern uint64_t g_nr_guest_instr;
 static bool trans_trap(DisasContext *ctx, arg_trap *a)
-{
+{   
     if(!ctx->cs->env_ptr->gpr[10]){
-        // shutdown_action = SHUTDOWN_ACTION_POWEROFF;
-        // qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+        shutdown_action = SHUTDOWN_ACTION_POWEROFF;
+        qemu_system_shutdown_request(SHUTDOWN_CAUSE_HOST_QMP_QUIT);
+    }
+    else if(ctx->cs->env_ptr->gpr[10] == 0x100){
+        xpoint_profiling_started = true;
+
+        g_nr_guest_instr = 1;
+
+        // Log("Start profiling, resetting inst count\n");
     }    
     return true;
 }

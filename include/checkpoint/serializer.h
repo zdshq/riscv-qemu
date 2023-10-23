@@ -21,5 +21,4 @@
 
 #endif //__RESTORE_ROM_ADDR__
 
-void serializeRegs(void);
-void qmp_gzpmemsave(int64_t addr, int64_t size, const char *filename,Error **errp);
+bool try_take_cpt(uint64_t icount);

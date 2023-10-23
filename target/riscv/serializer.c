@@ -16,8 +16,9 @@
 #include <zlib.h>
 #include "internals.h"
 #include "hw/intc/riscv_aclint.h"
+#include "checkpoint/checkpoint_arg.h"
 extern RISCVAclintMTimerState *my_riscv_mtimer;
-void serializeRegs(void){
+static void serializeRegs(void){
     CPUState *cs = qemu_get_cpu(0);
     for(int i = 0 ; i < 32; i++){
         cpu_physical_memory_write(INT_REG_CPT_ADDR + i*8, &cs->env_ptr->gpr[i], 8);
@@ -52,11 +53,24 @@ void serializeRegs(void){
     
 }
 
-void qmp_gzpmemsave(int64_t addr, int64_t size, const char *filename,
+static void serializePMem(int64_t addr, int64_t size,
                   Error **errp)
 {
     uint32_t l;
     uint8_t buf[4096];
+    char filepath[200];
+    if (checkpoint_state == SimpointCheckpointing) {
+        strcpy(filepath, pathmanger.outputPath);
+        filepath[strlen(filepath)] = '_';
+        filepath[strlen(filepath) + 1] = '\0';
+        strcat(filepath, )
+        filepath = pathmanger.outputPath + "_" + \
+                            to_string(simpoint2Weights.begin()->first) + "_" + \
+                            to_string(simpoint2Weights.begin()->second) + "_.gz";
+    } else {
+        filepath = pathManager.getOutputPath() + "_" + \
+                            to_string(inst_count) + "_.gz";
+    }
     gzFile compressed_mem = gzopen(filename, "wb");
     if (!compressed_mem) {
         error_printf("filename %s can't open", filename);
@@ -77,4 +91,90 @@ void qmp_gzpmemsave(int64_t addr, int64_t size, const char *filename,
     }
 exit:
     gzclose(compressed_mem);
+}
+
+static uint64_t find_minlocation(void) {
+    uint64_t min = -1;
+    for (int i = 0; i < SIMPOINT_IDX_MAX; i++){
+        if(!serializer.simpoints[i] && serializer.simpoints[i] < min){
+            min = serializer.simpoints[i];
+            serializer.simpoints[i] = 0;
+        }
+    }
+    if(min != -1){
+        return min;
+    }
+    return 0;
+}
+
+static bool instrsCouldTakeCpt(uint64_t num_insts) {
+    int minlocation = find_minlocation();
+    switch (checkpoint_state) {
+        case SimpointCheckpointing:
+        if (!minlocation) {
+            break;
+        }else{
+            uint64_t next_point = minlocation * serializer.intervalSize + 100000;
+            if (num_insts >= next_point) {
+            info_report("Should take cpt now: %lu", num_insts);
+            return true;
+            } else if (num_insts % serializer.intervalSize == 0) {
+            info_report("First cpt @ %lu, now: %lu",
+            next_point, num_insts);
+            break;
+            }else{
+            break;
+            }
+        }
+        case ManualOneShotCheckpointing:
+        return true;
+        case ManualUniformCheckpointing:
+        case UniformCheckpointing:
+        // if (num_insts >= nextUniformPoint) {
+        //     info_report("Should take cpt now: %lu", num_insts);
+        //     return true;
+        // }
+        break;
+        case NoCheckpoint:
+        break;
+        default:
+        break;
+    }
+    return false;
+    }
+// void notify_taken(uint64_t i) {
+//   info_report("Taking checkpoint @ instruction count %lu", i);
+//   if (checkpoint_state == SimpointCheckpointing) {
+//     info_report("simpoint2Weights size: %ld", simpoint2Weights.size());
+
+//     if (!simpoint2Weights.empty()) {
+//       simpoint2Weights.erase(simpoint2Weights.begin());
+//     }
+
+//     if (!simpoint2Weights.empty()) {
+//         pathManager.setCheckpointingOutputDir();
+//     } 
+
+//   } else if (checkpoint_state==ManualUniformCheckpointing||checkpoint_state==UniformCheckpointing) {
+//     nextUniformPoint += intervalSize;
+//     pathManager.setCheckpointingOutputDir();
+//   }
+// }
+
+#include "qapi/qapi-commands-machine.h"
+
+static void serialize(uint64_t icount){
+    MemoryInfo * info = qmp_query_memory_size_summary(NULL);
+    serializeRegs();
+    serializePMem(0x80000000, info->base_memory, "bbl.gz", NULL);  
+}
+
+bool try_take_cpt(uint64_t icount) {
+  if (instrsCouldTakeCpt(icount)) {
+    serialize(icount);
+    // notify_taken(icount);
+    info_report("return true");
+    return true;
+  }
+  return false;
 }

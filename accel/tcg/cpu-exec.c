@@ -961,8 +961,9 @@ static inline void cpu_loop_exec_tb(CPUState *cpu, TranslationBlock *tb,
 /* main execution loop */
 #include "qapi/qapi-commands-machine.h"
 #include "checkpoint/serializer.h"
-long long int instcount = 0;
-bool checkpoint = false;
+uint64_t g_nr_guest_instr = 0;
+bool take_cpt = false;
+extern bool xpoint_profiling_started;
 static int __attribute__((noinline))
 cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 {
@@ -1043,15 +1044,11 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
                if the guest is in advance */
             align_clocks(sc, cpu);
 
-            instcount++;
-            if(instcount > 120000 ){
-                if(!checkpoint){
-                    MemoryInfo * info = qmp_query_memory_size_summary(NULL);
-                    serializeRegs();
-                    qmp_gzpmemsave(0x80000000, info->base_memory, "bbl.gz", NULL);    
-                    checkpoint = true;
+            g_nr_guest_instr += tb->icount;
+            if(xpoint_profiling_started){
+                if(!take_cpt){
+                    take_cpt = true;
                 }
-                instcount = 0;
             }
         }
     }
