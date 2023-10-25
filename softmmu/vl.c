@@ -210,7 +210,7 @@ uint64_t checkpoint_interval = 0;
 FILE * simpoints_file = NULL;
 FILE * weights_file = NULL;
 Serializer serializer;
-PathManager pathmanager;
+PathManger pathmanger;
 /* ------------------------------------------------------ end --------------------------------------------*/
 static struct {
     const char *driver;
@@ -1399,42 +1399,42 @@ static void qemu_create_default_devices(void)
 
 static void init_path_manager(void){
     assert(output_base_dir);
-    strcpy(pathmanager.statsBaseDir, output_base_dir);
+    strcpy(pathmanger.statsBaseDir, output_base_dir);
     assert(config_name);
-    strcpy(pathmanager.configName, config_name);
+    strcpy(pathmanger.configName, config_name);
     assert(workload_name);
-    strcpy(pathmanager.workloadName, workload_name);
-    pathmanager.cptID = -1;
+    strcpy(pathmanger.workloadName, workload_name);
+    pathmanger.cptID = -1;
 
     // if (cpt_id != -1) {
     //     cptID = cpt_id;
     // }
 
-    if (profiling_state == SimpointCheckpointing || checkpoint_taking) {
-        pathmanager.cptID = 0;
+    if (checkpoint_state == SimpointCheckpointing) {
+        pathmanger.cptID = 0;
     }
 
-    strcpy(pathmanager.workloadPath, output_base_dir);
-    strcat(pathmanager.workloadPath, "/");
-    strcat(pathmanager.workloadPath, config_name);
-    strcat(pathmanager.workloadPath, "/");
-    strcat(pathmanager.workloadPath, workload_name);
-    info_report("Cpt id: %i", pathmanager.cptID);
-    if (profiling_state == SimpointCheckpointing) {
+    strcpy(pathmanger.workloadPath, output_base_dir);
+    strcat(pathmanger.workloadPath, "/");
+    strcat(pathmanger.workloadPath, config_name);
+    strcat(pathmanger.workloadPath, "/");
+    strcat(pathmanger.workloadPath, workload_name);
+    info_report("Cpt id: %i", pathmanger.cptID);
+    if (checkpoint_state == SimpointCheckpointing) {
         assert(simpoints_dir);
-        strcpy(pathmanager.simpointPath, simpoints_dir);
-        strcat(pathmanager.simpointPath, "/");
-        strcat(pathmanager.simpointPath, workload_name);
-        strcat(pathmanager.simpointPath, "/");
+        strcpy(pathmanger.simpointPath, simpoints_dir);
+        strcat(pathmanger.simpointPath, "/");
+        strcat(pathmanger.simpointPath, workload_name);
+        strcat(pathmanger.simpointPath, "/");
     }    
     char output_path[STRING_LEN], str_temp[STRING_LEN];
-    strcpy(output_path, pathmanager.workloadPath);
-    int temp = pathmanager.cptID , len = 0, i;
+    strcpy(output_path, pathmanger.workloadPath);
+    int temp = pathmanger.cptID , len = 0, i;
     while(temp / 10){
         len++;
         temp /= 10;
     }
-    temp = pathmanager.cptID;
+    temp = pathmanger.cptID;
     for(i = len; i >= 0; i--){
         str_temp[i] = temp % 10;
         temp /= 10;
@@ -1442,11 +1442,11 @@ static void init_path_manager(void){
     str_temp[len + 1] = '/';
     str_temp[len + 2] = '\0';
     strcat(output_path, str_temp);
-    strcpy(pathmanager.outputPath, output_path);
+    strcpy(pathmanger.outputPath, output_path);
     struct  stat st;
-    if(stat(pathmanager.outputPath, &st) != 0){
-        if(mkdir(pathmanager.outputPath, 0777) == 0){
-            info_report("Created %s\n", pathmanager.outputPath);
+    if(stat(pathmanger.outputPath, &st) != 0){
+        if(mkdir(pathmanger.outputPath, 0777) == 0){
+            info_report("Created %s\n", pathmanger.outputPath);
         }
     }
 }
@@ -1456,7 +1456,7 @@ static void init_path_manager(void){
 //     assert(checkpoint_interval);
 //     intervalSize = checkpoint_interval;
 //     Log("Doing simpoint profiling with interval %lu", intervalSize);
-//     auto path = pathManager.getOutputPath() + "/simpoint_bbv.gz";
+//     auto path = pathmanger.getOutputPath() + "/simpoint_bbv.gz";
 
 //     using NEMUNS::simout;
 //     simpointStream = simout.create(path, false);
@@ -1467,24 +1467,33 @@ static void init_path_manager(void){
 // }
 
 static void init_serializer(void){
-    if  (profiling_state == SimpointCheckpointing) {
+    if  (checkpoint_state == SimpointCheckpointing) {
         assert(checkpoint_interval);
         serializer.intervalSize = checkpoint_interval;
         info_report("Taking simpoint checkpionts with profiling interval %lu",
             checkpoint_interval);
-        simpoints_file = fopen(strcat(pathmanager.simpointPath, "simpoints0"), "r");
-        weights_file = fopen(strcat(pathmanager.simpointPath, "weights0"), "r");
-        assert(!simpoints_file);
-        assert(!weights_file);
+        
+        char filea[200];
+        strcpy(filea, pathmanger.simpointPath);
+        strcat(filea, "simpoints0");
+        simpoints_file = fopen(filea, "r");
+        strcpy(filea, pathmanger.simpointPath);
+        strcat(filea, "weights0");
+        weights_file = fopen(filea, "r");
+        assert(simpoints_file);
+        assert(weights_file);
 
         uint64_t simpoint_location, simpoint_id, weight_id;
         double weight;
-        while (fscanf(simpoints_file, "%lu %lu\n", &simpoint_location, &simpoint_id))
+        // if(fread(filea, 20, 1, simpoints_file)){
+
+        // }
+        while (fscanf(simpoints_file, "%lu %lu\n", &simpoint_location, &simpoint_id) != EOF)
         {
             assert(fscanf(weights_file, "%lf %lu\n", &weight, &weight_id));
             assert(weight_id == simpoint_id);
             serializer.simpoints[simpoint_id] = simpoint_location;
-            serializer.simpoints[weight_id] = weight;
+            serializer.weights[weight_id] = weight;
             info_report("Simpoint %lu: @ %lu, weight: %f", simpoint_id, simpoint_location, weight);
         }
     } else if (checkpoint_state==UniformCheckpointing||checkpoint_state==ManualUniformCheckpointing) {
@@ -3099,7 +3108,6 @@ void qemu_init(int argc, char **argv)
                 }
                 break;
             case QEMU_OPTION_bios:
-                workload_name = optarg;
                 qdict_put_str(machine_opts_dict, "firmware", optarg);
                 break;
             case QEMU_OPTION_singlestep:
@@ -3361,6 +3369,12 @@ void qemu_init(int argc, char **argv)
             case QEMU_OPTION_simpoint_dir:
                 {
                     simpoints_dir = optarg;
+                    checkpoint_state = SimpointCheckpointing;
+                    break;
+                }
+            case QEMU_OPTION_workload_name:
+                {
+                    workload_name = optarg;
                     checkpoint_state = SimpointCheckpointing;
                     break;
                 }

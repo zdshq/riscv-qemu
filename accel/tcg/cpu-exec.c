@@ -1046,8 +1046,8 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 
             g_nr_guest_instr += tb->icount;
             if(xpoint_profiling_started){
-                if(!take_cpt){
-                    take_cpt = true;
+                if(try_take_cpt(g_nr_guest_instr)){
+                    info_report("checkpoint ok!");
                 }
             }
         }

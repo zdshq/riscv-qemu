@@ -17,7 +17,7 @@ enum ProfilingState{
     SimpointProfiling,
 };
 
-struct PathManager{
+struct PathManger{
     char statsBaseDir[STRING_LEN];
     char configName[STRING_LEN];
     char workloadName[STRING_LEN];
@@ -30,13 +30,13 @@ struct Serializer{
     uint64_t intervalSize;
     uint64_t nextUniformPoint;
     uint64_t simpoints[SIMPOINT_IDX_MAX];
-    uint64_t weights[SIMPOINT_IDX_MAX];
+    double weights[SIMPOINT_IDX_MAX];
 };
-typedef struct PathManager PathManager;
+typedef struct PathManger PathManger;
 typedef struct Serializer Serializer;
 
 extern int checkpoint_state;
 extern Serializer serializer;
-extern PathManager pathmanager;
+extern PathManger pathmanger;
 
 #endif

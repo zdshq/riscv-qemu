@@ -186,6 +186,15 @@ SRST
     Define an SGX EPC section.
 ERST
 
+DEF("workload_name", HAS_ARG, QEMU_OPTION_workload_name,
+    "workload_name\n",
+    QEMU_ARCH_ALL)
+
+SRST
+``workload_name\n``
+    Define an SGX EPC section.
+ERST
+
 DEF("output_base_dir", HAS_ARG, QEMU_OPTION_output_base_dir,
     "store simpoint bbv, cpts, and stats in STAT_DIR\n",
     QEMU_ARCH_ALL)
